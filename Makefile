@@ -1,7 +1,7 @@
 .PHONY: check fmt lint test doc qualify-tmux
 check: fmt lint test doc
 fmt:
-	cargo fmt --all -- --check
+	cargo fmt -- --check
 lint:
 	cargo clippy --all-targets --all-features --locked --offline -- -D warnings
 test:
