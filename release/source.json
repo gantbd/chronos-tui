@@ -2,9 +2,18 @@
   "schema": 1,
   "package": "chronos-tui",
   "inputs": {
-    "chronos": { "checkout": "../chronos", "revision": null },
-    "moira": { "checkout": "../moira", "revision": null },
-    "daimon": { "checkout": "../daimon", "revision": null }
+    "chronos": {
+      "checkout": "../chronos",
+      "revision": "bfb722bced6b4b65ce6b669b5afd9226bcbb1c56"
+    },
+    "moira": {
+      "checkout": "../moira",
+      "revision": "1ce4b0ad4a09d1a0602eb9f3afbf1ff31cbc12c2"
+    },
+    "daimon": {
+      "checkout": "../daimon",
+      "revision": "8903fc696dc65901772550585ab7488d371cc9e6"
+    }
   },
   "localSiblingBuild": true,
   "immutableSourceQualified": false,
