@@ -33,6 +33,15 @@ Each instance admits one action and one view handoff; background service waits
 never run in its UI update path. Content-free client request/refusal/error and
 residence signals remain separate from engine/service/persistence signals.
 
+## Source qualification
+
+The local gates are `make check` and `make qualify-tmux`. An immutable
+build requires Chronos to commit its client, protocol, and local transport
+crates, Moira to commit its protocol and wire crates, and Daimon to commit
+its client, protocol, and wire crates. Record those exact revisions in
+`release/source.json` after a locked build from clean sibling checkouts.
+Workbench records the Chronos TUI revision independently.
+
 ## Coordination hub
 
 The normal launcher opens the hub. Each supplied directory is an existing
