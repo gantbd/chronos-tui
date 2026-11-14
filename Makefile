@@ -15,3 +15,7 @@ qualify-tmux:
 	cargo build --manifest-path ../chronos/Cargo.toml -p chronos-standalone --bin chronos-service --locked --offline
 	python3 scripts/qualify-tmux.py target/debug/chronos-tui ../chronos/target/debug/chronos-service --dependencies-v6 --cancel-receipts
 	python3 scripts/qualify-watch.py target/debug/chronos-tui ../chronos/target/debug/chronos-service
+
+.PHONY: qualify-source
+qualify-source:
+	python3 scripts/qualify-source.py
