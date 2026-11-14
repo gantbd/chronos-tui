@@ -5,6 +5,7 @@ use crate::explain::{Detail, Selection};
 use crate::graph::Graph;
 use crate::handoff::{Handoff, HandoffAction, HandoffRequest, HandoffResult};
 use crate::planning::{Plan, day};
+use crate::presence::Presence;
 use crate::watch::Watch;
 use crate::{Component, Input, Lifecycle, format_not_before, translate_key};
 use chronos_model::{Row, View, display_id};
@@ -98,6 +99,9 @@ pub struct Hub {
     writes: bool,
     search: Option<Search>,
     explanation: Option<(Selection, Detail)>,
+    presence: Option<Presence>,
+    presence_open: bool,
+    presence_scroll: u16,
     attempt_lookup: Option<(Option<(Selection, u32)>, Lookup)>,
     agenda: Option<(Scope, Agenda)>,
     agenda_visible: bool,
@@ -182,6 +186,9 @@ impl Hub {
             writes,
             search: None,
             explanation: None,
+            presence: None,
+            presence_open: false,
+            presence_scroll: 0,
             attempt_lookup: None,
             agenda: None,
             agenda_visible: false,
@@ -267,6 +274,12 @@ impl Hub {
 
     pub fn poll(&mut self) -> bool {
         let mut changed = self.handoff.poll();
+        if self.presence.as_mut().is_some_and(Presence::poll) {
+            changed = true;
+            if !self.presence_open {
+                self.presence = None;
+            }
+        }
         for stream in &mut self.streams {
             let delivered = stream.component.poll();
             changed |= delivered;
@@ -342,6 +355,21 @@ impl Hub {
         let input = translate_key(key);
         if input == Input::Close {
             return Lifecycle::CloseRequested;
+        }
+        if self.presence_open {
+            if input == Input::Escape {
+                self.presence_open = false;
+                if matches!(self.presence, Some(Presence::Ready(..))) {
+                    self.presence = None;
+                }
+            } else if input == Input::Text('l') {
+                self.open_presence();
+            } else if input == Input::Up {
+                self.presence_scroll = self.presence_scroll.saturating_sub(1);
+            } else if input == Input::Down {
+                self.presence_scroll = self.presence_scroll.saturating_add(1);
+            }
+            return Lifecycle::Continue;
         }
         if self.graph_visible {
             if input == Input::Escape {
@@ -450,6 +478,10 @@ impl Hub {
                             Detail::start(self.streams[self.active].directory.clone(), &selection);
                         self.explanation = Some((selection, detail));
                     }
+                    return Lifecycle::Continue;
+                }
+                KeyCode::Char('l') if self.surface == Surface::Execution && !self.navigating => {
+                    self.open_presence();
                     return Lifecycle::Continue;
                 }
                 KeyCode::Char('x') if self.surface == Surface::Execution && !self.navigating => {
@@ -586,6 +618,21 @@ impl Hub {
         Some((self.explanation_selection()?, attempt))
     }
 
+    fn open_presence(&mut self) {
+        if !self.presence_open && matches!(self.presence, Some(Presence::Reading(_))) {
+            return;
+        }
+        self.presence_open = true;
+        self.presence_scroll = 0;
+        if !matches!(self.presence, Some(Presence::Reading(_))) {
+            self.presence = self.streams[self.active]
+                .moira
+                .as_ref()
+                .and_then(|binding| binding.daimon.clone())
+                .map(Presence::start);
+        }
+    }
+
     fn attempt_text(&self) -> String {
         if self.streams[self.active].moira.is_none() {
             return "Moira lookup is not configured.".into();
@@ -679,6 +726,26 @@ impl Hub {
             header,
         );
 
+        if self.presence_open {
+            let text = self
+                .presence
+                .as_ref()
+                .map_or_else(|| "Daimon roster is not configured".into(), Presence::lines);
+            let block = panel("Daimon-supervised agents", true);
+            let inner = block.inner(body);
+            let lines = text.lines().count();
+            let paragraph = Paragraph::new(text).block(block);
+            let max_scroll = lines.saturating_sub(usize::from(inner.height)) as u16;
+            frame.render_widget(
+                paragraph.scroll((self.presence_scroll.min(max_scroll), 0)),
+                body,
+            );
+            frame.render_widget(
+                Paragraph::new(" ↑/↓ scroll   l refresh roster   Esc return").style(DIM),
+                keys,
+            );
+            return;
+        }
         if self.graph_visible {
             self.draw_graph(frame, body);
             frame.render_widget(
@@ -1147,7 +1214,7 @@ impl Hub {
         }
         let note = match self.surface {
             Surface::Dependencies => "Prerequisites   Phase        Task · g opens visible edges",
-            Surface::Execution => "Chronos task attempts",
+            Surface::Execution => "Chronos task attempts · l roster",
             _ if view.rows.is_empty() => "No tasks on this page",
             _ => "Phase          Task",
         };

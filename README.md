@@ -241,3 +241,11 @@ observed revision. It resolves the live source association, authorizes access
 and publication, and owns the review proposal. After an unknown publication,
 inspect the destination with the host before starting a new export session.
 The standalone binary still needs a live Vellum host composition.
+
+
+### Daimon presence
+
+With a Daimon peer configured, open **5 Execution** and press **l** to read
+the bounded roster of Daimon-supervised agents. Press **l** again to refresh,
+use the arrow keys to scroll, and press **Esc** to return. The view shows the
+snapshot age and the presence status Daimon reported at read time.

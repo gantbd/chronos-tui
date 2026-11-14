@@ -12,12 +12,11 @@
     },
     "daimon": {
       "checkout": "../daimon",
-      "revision": "8903fc696dc65901772550585ab7488d371cc9e6"
+      "revision": "197edccaa1f840d72933ae35e159af6d411df82f"
     }
   },
   "localSiblingBuild": true,
-  "immutableSourceQualified": true,
+  "immutableSourceQualified": false,
   "remoteReachabilityQualified": false,
-  "cratesIoPublished": false,
-  "qualifiedTuiRevision": "d8a0ede36d79f4532a5a8fae2611cae6541f2328"
+  "cratesIoPublished": false
 }

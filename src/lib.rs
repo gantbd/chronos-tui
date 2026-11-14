@@ -11,6 +11,7 @@ mod handoff;
 pub use handoff::{HandoffAction, HandoffRequest, HandoffResult};
 mod hub;
 mod planning;
+mod presence;
 #[cfg(unix)]
 pub mod profile;
 mod watch;
