@@ -35,12 +35,12 @@ residence signals remain separate from engine/service/persistence signals.
 
 ## Source qualification
 
-The local gates are `make check` and `make qualify-tmux`. An immutable
-build requires Chronos to commit its client, protocol, and local transport
-crates, Moira to commit its protocol and wire crates, and Daimon to commit
-its client, protocol, and wire crates. Record those exact revisions in
-`release/source.json` after a locked build from clean sibling checkouts.
-Workbench records the Chronos TUI revision independently.
+Use `make check` and `make qualify-tmux` for working-tree qualification.
+`make qualify-source` extracts the committed TUI and pinned sibling
+revisions into a temporary directory and runs the locked offline quality
+gate. The sibling revisions are on local `qualification/chronos-tui-source`
+branches. The source record identifies the tested TUI revision. Remote
+reachability remains unqualified.
 
 ## Coordination hub
 
