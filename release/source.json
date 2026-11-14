@@ -16,7 +16,8 @@
     }
   },
   "localSiblingBuild": true,
-  "immutableSourceQualified": false,
+  "immutableSourceQualified": true,
   "remoteReachabilityQualified": false,
-  "cratesIoPublished": false
+  "cratesIoPublished": false,
+  "qualifiedTuiRevision": "b50bd3beb6436b6f24f0f6ea585567b356e45e0f"
 }
