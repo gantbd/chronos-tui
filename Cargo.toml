@@ -1,0 +1,36 @@
+[package]
+name = "chronos-tui"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/gantbd/chronos-tui"
+readme = "README.md"
+publish = false
+description = "Composable terminal presentation for Chronos coordination"
+
+[dependencies]
+chronos-protocol = { version = "=0.1.0", path = "../chronos/protocol/chronos-protocol" }
+chronos-client = { version = "=0.1.0", path = "../chronos/client/chronos-client" }
+chronos-local = { version = "=0.1.0", path = "../chronos/transport/chronos-local" }
+chronos-model = { version = "=0.1.0", path = "../chronos/host/chronos-model" }
+ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm"] }
+crossterm = "=0.29.0"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+
+moira-protocol = { version = "=0.1.0", path = "../moira/crates/moira-protocol" }
+moira-wire = { version = "=0.1.0", path = "../moira/crates/moira-wire" }
+
+daimon-client = { version = "=0.1.0", path = "../daimon/crates/daimon-client", features = ["unix"] }
+daimon-protocol = { version = "=0.1.0", path = "../daimon/crates/daimon-protocol" }
+daimon-wire = { version = "=0.1.0", path = "../daimon/crates/daimon-wire" }
+
+[dev-dependencies]
+chronos-sdk-embedded = { version = "=0.1.0", path = "../chronos/sdk/embedded" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"

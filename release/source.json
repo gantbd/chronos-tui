@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "package": "chronos-tui",
+  "inputs": {
+    "chronos": { "checkout": "../chronos", "revision": null },
+    "moira": { "checkout": "../moira", "revision": null },
+    "daimon": { "checkout": "../daimon", "revision": null }
+  },
+  "localSiblingBuild": true,
+  "immutableSourceQualified": false,
+  "remoteReachabilityQualified": false,
+  "cratesIoPublished": false
+}
