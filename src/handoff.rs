@@ -36,7 +36,7 @@ pub(crate) type Host = Arc<dyn Fn(HandoffRequest) -> HandoffResult + Send + Sync
 pub(crate) struct Handoff {
     pub host: Option<Host>,
     pub pending: Option<crate::explain::Selection>,
-    pub worker: Option<mpsc::Receiver<HandoffResult>>,
+    pub worker: Option<(HandoffAction, mpsc::Receiver<HandoffResult>)>,
     pub notice: &'static str,
     publication_unknown: bool,
 }
@@ -58,15 +58,16 @@ impl Handoff {
             return;
         };
         let (send, receive) = mpsc::sync_channel(1);
+        let action = request.action;
         thread::spawn(move || {
             let _ = send.send(host(request));
         });
-        self.worker = Some(receive);
+        self.worker = Some((action, receive));
         self.notice = "Waiting for the handoff host…";
     }
 
     pub fn poll(&mut self) -> bool {
-        let Some(worker) = &self.worker else {
+        let Some((action, worker)) = &self.worker else {
             return false;
         };
         self.notice = match worker.try_recv() {
@@ -75,9 +76,14 @@ impl Handoff {
             Ok(HandoffResult::Denied) => "Handoff denied by the host.",
             Ok(HandoffResult::Stale) => "Handoff target changed. Refresh before trying again.",
             Ok(HandoffResult::Unavailable) => "Handoff unavailable.",
-            Ok(HandoffResult::PublicationUnknown) | Err(mpsc::TryRecvError::Disconnected) => {
+            Ok(HandoffResult::PublicationUnknown) | Err(mpsc::TryRecvError::Disconnected)
+                if matches!(action, HandoffAction::Export) =>
+            {
                 self.publication_unknown = true;
                 "Handoff outcome unknown. Inspect the destination with the host."
+            }
+            Ok(HandoffResult::PublicationUnknown) | Err(mpsc::TryRecvError::Disconnected) => {
+                "Handoff review unavailable."
             }
             Err(mpsc::TryRecvError::Empty) => return false,
         };
@@ -90,6 +96,19 @@ impl Handoff {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn disconnected_review_does_not_fence_export() {
+        let (send, receive) = mpsc::sync_channel(1);
+        drop(send);
+        let mut handoff = Handoff {
+            worker: Some((HandoffAction::Review, receive)),
+            ..Handoff::default()
+        };
+        assert!(handoff.poll());
+        assert!(handoff.can_export());
+        assert_eq!(handoff.notice, "Handoff review unavailable.");
+    }
 
     #[test]
     fn unknown_publication_blocks_another_export() {
