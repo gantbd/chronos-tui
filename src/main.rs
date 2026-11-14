@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 #[cfg(unix)]
-mod profile;
+use chronos_tui::profile;
 #[cfg(unix)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use chronos_model::{Action, Model};

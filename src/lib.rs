@@ -11,6 +11,8 @@ mod handoff;
 pub use handoff::{HandoffAction, HandoffRequest, HandoffResult};
 mod hub;
 mod planning;
+#[cfg(unix)]
+pub mod profile;
 mod watch;
 pub use component::{Component, Input, Lifecycle, translate_key};
 pub use hub::{Hub, Workstream, validate_workstreams};

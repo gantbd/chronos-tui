@@ -1,5 +1,5 @@
 //! Portable TUI connection configuration. Launch flags remain invocation-local.
-use chronos_tui::Workstream;
+use crate::Workstream;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
@@ -49,12 +49,12 @@ pub fn load(path: &Path) -> Result<Vec<Workstream>> {
             },
         })
         .collect();
-    chronos_tui::validate_workstreams(&workstreams)?;
+    crate::validate_workstreams(&workstreams)?;
     Ok(workstreams)
 }
 
 pub fn save(path: &Path, workstreams: &[Workstream]) -> Result<()> {
-    chronos_tui::validate_workstreams(workstreams)?;
+    crate::validate_workstreams(workstreams)?;
     let base = std::env::current_dir()?;
     let profile = Profile {
         version: 1,
