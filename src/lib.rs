@@ -24,6 +24,23 @@ use ratatui::{
     widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 
+/// Presentation capabilities owned by this peer. They describe host-facing
+/// composition support and never grant task mutation or scheduling authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapabilityManifest {
+    pub schema: u8,
+    pub peer: &'static str,
+    pub interactive: &'static [&'static str],
+    pub headless: &'static [&'static str],
+}
+
+pub const CAPABILITIES: CapabilityManifest = CapabilityManifest {
+    schema: 1,
+    peer: "chronos",
+    interactive: &["tasks.observe.v1"],
+    headless: &["tasks.observe.v1"],
+};
+
 pub fn render(frame: &mut Frame<'_>, view: &View, entry: Option<&str>, notice: &str) {
     draw_in(frame, frame.area(), view, entry, notice);
 }

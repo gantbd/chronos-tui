@@ -3,6 +3,26 @@
 use std::process::Command;
 
 #[test]
+fn capabilities_are_peer_owned_and_connection_free() {
+    let output = Command::new(env!("CARGO_BIN_EXE_chronos-tui"))
+        .arg("capabilities")
+        .output()
+        .expect("run capability discovery");
+    assert!(output.status.success());
+    let manifest: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(manifest["schema"], 1);
+    assert_eq!(manifest["peer"], "chronos");
+    assert_eq!(
+        manifest["interactive"],
+        serde_json::json!(["tasks.observe.v1"])
+    );
+    assert_eq!(
+        manifest["headless"],
+        serde_json::json!(["tasks.observe.v1"])
+    );
+}
+
+#[test]
 fn headless_reports_every_workstream_and_refuses_partial_success() {
     let scratch = std::env::temp_dir().join(format!("chronos-tui-headless-{}", std::process::id()));
     let primary = scratch.join("primary");

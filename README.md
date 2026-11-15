@@ -198,6 +198,10 @@ Run `sh tests/live/headless.sh` to qualify the explicit headless command against
 a real Chronos service, including a healthy workstream retained beside an
 offline peer and a nonzero aggregate exit.
 
+`chronos-tui capabilities` prints the peer-owned interactive/headless
+presentation manifest without opening a service. It describes composition
+support and does not enable writes, scheduling controls, or task authority.
+
 Press `s` to inspect scheduling, `e` to propose enablement, `p` for global pause,
 `t` for selected-task pause, `b` for concurrency capacity, and `d` for not-before.
 Each control is a proposal: `y` confirms its exact observed revision/incarnation;

@@ -22,6 +22,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         return Ok(());
     }
+    if directory == "capabilities" {
+        if args.next().is_some() {
+            return Err("capabilities accepts no additional arguments".into());
+        }
+        let manifest = chronos_tui::CAPABILITIES;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "schema": manifest.schema,
+                "peer": manifest.peer,
+                "interactive": manifest.interactive,
+                "headless": manifest.headless,
+            }))?
+        );
+        return Ok(());
+    }
     if directory == "headless" {
         return run_headless(args);
     }
