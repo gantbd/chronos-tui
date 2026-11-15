@@ -10,6 +10,9 @@ classic, profile, and legacy snapshot behavior is retained. The explicit
 public observer, emits a versioned `tasks.observe.v1` JSON report, preserves
 healthy rows on partial failure, and constructs no TUI state. The real-service
 tmux hub and feed journeys pass through the extracted binary.
+The peer now publishes a closed interactive/headless presentation capability
+manifest. Standalone and Workbench hosts can negotiate it before connecting;
+the manifest never enables task writes or scheduling authority.
 
 - Keep `chronos-tui` composable: no CLI parsing, terminal lifecycle, service
   startup, global shortcut policy, or process exit in the component boundary.
