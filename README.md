@@ -180,6 +180,24 @@ atomic local service. Embeddings use `Component::new_with_scheduling(client,
 writes)`; existing V1-only constructors are unchanged. The same option works
 with `--snapshot` without entering terminal mode. Reads need no write flag.
 
+For a bounded machine-readable observation across one or more workstreams, use
+the explicit headless command:
+
+```sh
+cargo run -p chronos-tui-cli --bin chronos-tui --locked --offline -- \
+  headless /path/to/primary --name Primary \
+  --workstream Secondary /path/to/secondary
+```
+
+It emits a versioned JSON report for the `tasks.observe.v1` capability, retains
+each healthy workstream when another is unavailable, and exits unsuccessfully
+unless every observation is current. `--snapshot` remains the legacy
+single-workstream human-readable form.
+
+Run `sh tests/live/headless.sh` to qualify the explicit headless command against
+a real Chronos service, including a healthy workstream retained beside an
+offline peer and a nonzero aggregate exit.
+
 Press `s` to inspect scheduling, `e` to propose enablement, `p` for global pause,
 `t` for selected-task pause, `b` for concurrency capacity, and `d` for not-before.
 Each control is a proposal: `y` confirms its exact observed revision/incarnation;

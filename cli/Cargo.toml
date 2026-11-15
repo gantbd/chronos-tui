@@ -14,10 +14,12 @@ doc = false
 
 [dependencies]
 chronos-tui = { path = ".." }
+chronos-client = { version = "=0.1.0", path = "../../chronos/client/chronos-client" }
 chronos-local = { version = "=0.1.0", path = "../../chronos/transport/chronos-local" }
 chronos-model = { version = "=0.1.0", path = "../../chronos/host/chronos-model" }
 ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm"] }
 crossterm = "=0.29.0"
+serde_json = "=1.0.151"
 
 [lints.rust]
 unsafe_code = "forbid"

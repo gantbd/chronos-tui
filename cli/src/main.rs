@@ -11,16 +11,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut moira = Vec::new();
     let mut daimon = Vec::new();
     let mut args = std::env::args_os().skip(1);
-    let Some(directory) = args.next() else {
+    let Some(mut directory) = args.next() else {
         return Err(
-            "usage: chronos-tui PRIVATE_SERVICE_DIRECTORY [--allow-writes] [--cancel-receipts] [--scheduling] [--watch] [--planning PATH] [--moira WORKSTREAM SOCKET SCOPE] [--daimon WORKSTREAM SOCKET] [--snapshot|--classic] [--name NAME] [--workstream NAME DIRECTORY]…".into(),
+            "usage: chronos-tui [interactive] PRIVATE_SERVICE_DIRECTORY [OPTIONS] | chronos-tui headless (PRIVATE_SERVICE_DIRECTORY [--name NAME] [--workstream NAME DIRECTORY]… | --profile PATH)".into(),
         );
     };
     if directory == "--help" {
         println!(
-            "chronos-tui PRIVATE_SERVICE_DIRECTORY [--allow-writes] [--cancel-receipts] [--scheduling] [--watch] [--planning PATH] [--moira WORKSTREAM SOCKET SCOPE] [--daimon WORKSTREAM SOCKET] [--snapshot|--classic] [--name NAME] [--workstream NAME DIRECTORY]…\nUse --profile PATH [--allow-writes] [--cancel-receipts] [--scheduling] [--watch] [--planning PATH] [--moira WORKSTREAM SOCKET SCOPE] [--daimon WORKSTREAM SOCKET] to reopen a workspace. Append --save-profile PATH to a directory-based invocation to save and exit.\nRead-only by default. --scheduling opts into guarded pause, eligibility and capacity controls on an atomic local service. UI waits run on a bounded worker. --snapshot prints one page without entering terminal mode."
+            "chronos-tui [interactive] PRIVATE_SERVICE_DIRECTORY [--allow-writes] [--cancel-receipts] [--scheduling] [--watch] [--planning PATH] [--moira WORKSTREAM SOCKET SCOPE] [--daimon WORKSTREAM SOCKET] [--snapshot|--classic] [--name NAME] [--workstream NAME DIRECTORY]…\nUse [interactive] --profile PATH [--allow-writes] [--cancel-receipts] [--scheduling] [--watch] [--planning PATH] [--moira WORKSTREAM SOCKET SCOPE] [--daimon WORKSTREAM SOCKET] to reopen a workspace. Append --save-profile PATH to a directory-based invocation to save and exit.\nUse headless (PRIVATE_SERVICE_DIRECTORY [--name NAME] [--workstream NAME DIRECTORY]… | --profile PATH) for one bounded versioned JSON observation without constructing TUI state. Read-only by default. --scheduling opts into guarded pause, eligibility and capacity controls on an atomic local service. UI waits run on a bounded worker. --snapshot remains the legacy single-workstream text snapshot."
         );
         return Ok(());
+    }
+    if directory == "headless" {
+        return run_headless(args);
+    }
+    if directory == "interactive" {
+        directory = args
+            .next()
+            .ok_or("interactive requires a service directory or --profile")?;
     }
     if directory == "--profile" {
         let path = args.next().ok_or("--profile requires a path")?;
@@ -231,6 +239,138 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         |component, frame| component.draw_in(frame, frame.area()),
         |component, key| component.update(translate_key(key), true),
     )
+}
+
+#[cfg(unix)]
+fn run_headless(
+    mut args: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use chronos_tui::Workstream;
+    use std::path::{Path, PathBuf};
+
+    let first = args
+        .next()
+        .ok_or("headless requires a service directory or --profile")?;
+    let streams = if first == "--profile" {
+        let path = args.next().ok_or("--profile requires a path")?;
+        if args.next().is_some() {
+            return Err("headless profile mode accepts no additional options".into());
+        }
+        profile::load(Path::new(&path))?
+    } else {
+        let directory = PathBuf::from(first);
+        let mut primary = Workstream {
+            name: directory
+                .file_name()
+                .unwrap_or(directory.as_os_str())
+                .to_string_lossy()
+                .into_owned(),
+            directory,
+        };
+        let mut additional = Vec::new();
+        while let Some(flag) = args.next() {
+            if flag == "--name" {
+                primary.name = args
+                    .next()
+                    .and_then(|value| value.into_string().ok())
+                    .ok_or("--name requires a UTF-8 workstream name")?;
+            } else if flag == "--workstream" {
+                let name = args
+                    .next()
+                    .and_then(|value| value.into_string().ok())
+                    .ok_or("--workstream requires a UTF-8 name and service directory")?;
+                let directory = args
+                    .next()
+                    .filter(|value| {
+                        !value.is_empty() && !value.as_encoded_bytes().starts_with(b"--")
+                    })
+                    .ok_or("--workstream requires a service directory")?;
+                additional.push(Workstream {
+                    name,
+                    directory: directory.into(),
+                });
+            } else {
+                return Err("unknown headless option".into());
+            }
+        }
+        std::iter::once(primary).chain(additional).collect()
+    };
+
+    let mut observations = Vec::with_capacity(streams.len());
+    let mut complete = true;
+    for stream in streams {
+        let (observation, current) = observe_workstream(stream);
+        observations.push(observation);
+        complete &= current;
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "version": 1,
+            "mode": "headless",
+            "complete": complete,
+            "capability": "tasks.observe.v1",
+            "workstreams": observations,
+        }))?
+    );
+    if complete {
+        Ok(())
+    } else {
+        Err("one or more Chronos observations were not current".into())
+    }
+}
+
+#[cfg(unix)]
+fn observe_workstream(workstream: chronos_tui::Workstream) -> (serde_json::Value, bool) {
+    use chronos_client::observer::{Observer, ObserverLimits, RefreshError};
+
+    let mut observer = Observer::new(ObserverLimits {
+        page_size: 32,
+        max_pages: 8,
+        max_entries: 256,
+        max_id_bytes: 256,
+    })
+    .expect("static Chronos observer limits are valid");
+    let mut client = chronos_local::LocalClient::new(workstream.directory);
+    match observer.refresh(&mut client) {
+        Ok(()) => {
+            let view = observer
+                .view()
+                .expect("successful refresh publishes a view");
+            (
+                serde_json::json!({
+                    "name": workstream.name,
+                    "status": "current",
+                    "revision": format!("{:?}", view.revision),
+                    "tasks": view.entries.len(),
+                    "truncated": false,
+                }),
+                true,
+            )
+        }
+        Err(error) => {
+            let status = match error {
+                RefreshError::Transport(chronos_local::CallError::NotSent) => "not_sent",
+                RefreshError::Transport(chronos_local::CallError::OutcomeUnknown) => {
+                    "outcome_unknown"
+                }
+                RefreshError::Transport(chronos_local::CallError::InvalidResponse)
+                | RefreshError::InvalidResponse => "invalid_reply",
+                RefreshError::Refused => "refused",
+                RefreshError::ResyncRequired => "resync_required",
+                RefreshError::Limit => "limit",
+                RefreshError::Capacity => "capacity",
+                RefreshError::InvalidLimits => "invalid_limits",
+            };
+            (
+                serde_json::json!({
+                    "name": workstream.name,
+                    "status": status,
+                }),
+                false,
+            )
+        }
+    }
 }
 
 #[cfg(unix)]
