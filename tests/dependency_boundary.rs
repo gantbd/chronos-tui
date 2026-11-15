@@ -42,4 +42,13 @@ fn presentation_is_unpublished_engine_free_and_has_no_peer_ui_dependency() {
         );
     }
     assert!(include_str!("../Cargo.toml").contains("publish = false"));
+    assert!(
+        !std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/main.rs")
+            .exists(),
+        "the reusable presentation package must not own the CLI entry point"
+    );
+    let cli = include_str!("../cli/Cargo.toml");
+    assert!(cli.contains("name = \"chronos-tui-cli\""));
+    assert!(cli.contains("chronos-tui = { path = \"..\" }"));
 }

@@ -144,6 +144,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "chronos-tui-cli"
+version = "0.1.0"
+dependencies = [
+ "chronos-local",
+ "chronos-model",
+ "chronos-tui",
+ "crossterm",
+ "ratatui",
+]
+
+[[package]]
 name = "chronos-wire"
 version = "0.1.0"
 dependencies = [

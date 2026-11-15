@@ -3,12 +3,13 @@
 Independent, unpublished Ratatui terminal presentation for Chronos. The local
 source build uses sibling `chronos`, `moira`, and `daimon` checkouts. The
 [source record](release/source.json) tracks the current qualification limits.
+The [repository roadmap](ROADMAP.md) records the TUI/CLI/Workbench boundary.
 
 ```sh
 make check
-cargo run --locked --offline -- /private/tmp/chronos-local
+cargo run -p chronos-tui-cli --bin chronos-tui --locked --offline -- /private/tmp/chronos-local
 # Optional writes require both service and client enablement:
-cargo run --locked --offline -- /private/tmp/chronos-local --allow-writes
+cargo run -p chronos-tui-cli --bin chronos-tui --locked --offline -- /private/tmp/chronos-local --allow-writes
 cargo run --example composite --locked --offline -- /private/tmp/chronos-local
 ```
 
@@ -49,7 +50,7 @@ Chronos service with its own task state and permissions. Use `Project / Workstre
 names to group adjacent workstreams under a project in the sidebar.
 
 ```sh
-cargo run --locked --offline -- /private/tmp/atlas-planning \
+cargo run -p chronos-tui-cli --bin chronos-tui --locked --offline -- /private/tmp/atlas-planning \
   --name 'Atlas / Planning' \
   --workstream 'Boreal / Delivery' /private/tmp/boreal-delivery \
   --allow-writes --scheduling
@@ -86,7 +87,7 @@ Append `--save-profile /path/to/team.json` to the directory-based launch
 command to save its workstream names and endpoints and exit. Reopen it with:
 
 ```sh
-cargo run --locked --offline -- --profile /path/to/team.json --scheduling
+cargo run -p chronos-tui-cli --bin chronos-tui --locked --offline -- --profile /path/to/team.json --scheduling
 ```
 
 The versioned JSON file stores connection configuration only. Pass

@@ -1,3 +1,4 @@
+//! Standalone interactive and headless Chronos application.
 #![forbid(unsafe_code)]
 #[cfg(unix)]
 use chronos_tui::profile;

@@ -1,0 +1,26 @@
+[package]
+name = "chronos-tui-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Standalone interactive and headless CLI for chronos-tui"
+
+[[bin]]
+name = "chronos-tui"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+chronos-tui = { path = ".." }
+chronos-local = { version = "=0.1.0", path = "../../chronos/transport/chronos-local" }
+chronos-model = { version = "=0.1.0", path = "../../chronos/host/chronos-model" }
+ratatui = { version = "=0.30.2", default-features = false, features = ["crossterm"] }
+crossterm = "=0.29.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
