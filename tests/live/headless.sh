@@ -46,6 +46,7 @@ printf '%s' "$report" | python3 -c '
 import json, sys
 report = json.load(sys.stdin)
 assert report["version"] == 1 and report["mode"] == "headless"
+assert report["peer"] == "chronos"
 assert report["complete"] and report["capability"] == "tasks.observe.v1"
 assert len(report["workstreams"]) == 1
 row = report["workstreams"][0]

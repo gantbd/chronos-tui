@@ -40,10 +40,28 @@ fn headless_reports_every_workstream_and_refuses_partial_success() {
         serde_json::from_slice(&output.stdout).expect("versioned JSON report");
     assert_eq!(report["version"], 1);
     assert_eq!(report["mode"], "headless");
+    assert_eq!(report["peer"], "chronos");
     assert_eq!(report["capability"], "tasks.observe.v1");
     assert_eq!(report["complete"], false);
     assert_eq!(report["workstreams"][0]["name"], "Primary");
     assert_eq!(report["workstreams"][0]["status"], "not_sent");
     assert_eq!(report["workstreams"][1]["name"], "Secondary");
     assert_eq!(report["workstreams"][1]["status"], "not_sent");
+}
+
+#[test]
+fn headless_configuration_failure_is_versioned_json() {
+    let output = Command::new(env!("CARGO_BIN_EXE_chronos-tui"))
+        .args(["headless", "--profile"])
+        .output()
+        .expect("run malformed headless CLI");
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["version"], 1);
+    assert_eq!(report["mode"], "headless");
+    assert_eq!(report["complete"], false);
+    assert_eq!(report["peer"], "chronos");
+    assert_eq!(report["capability"], "tasks.observe.v1");
+    assert_eq!(report["status"], "configuration_refused");
+    assert_eq!(report["workstreams"], serde_json::json!([]));
 }

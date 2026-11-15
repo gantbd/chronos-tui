@@ -259,8 +259,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(unix)]
 fn run_headless(
-    mut args: impl Iterator<Item = std::ffi::OsString>,
+    args: impl Iterator<Item = std::ffi::OsString>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let streams = match parse_headless(args) {
+        Ok(streams) => streams,
+        Err(error) => return chronos_headless_failure("configuration_refused", &error.to_string()),
+    };
+    let manifest = chronos_tui::CAPABILITIES;
+
+    let mut observations = Vec::with_capacity(streams.len());
+    let mut complete = true;
+    for stream in streams {
+        let (observation, current) = observe_workstream(stream);
+        observations.push(observation);
+        complete &= current;
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "version": 1,
+            "mode": "headless",
+            "complete": complete,
+            "peer": manifest.peer,
+            "capability": manifest.headless[0],
+            "workstreams": observations,
+        }))?
+    );
+    if complete {
+        Ok(())
+    } else {
+        Err("one or more Chronos observations were not current".into())
+    }
+}
+
+#[cfg(unix)]
+fn parse_headless(
+    mut args: impl Iterator<Item = std::ffi::OsString>,
+) -> Result<Vec<chronos_tui::Workstream>, Box<dyn std::error::Error>> {
     use chronos_tui::Workstream;
     use std::path::{Path, PathBuf};
 
@@ -312,28 +347,25 @@ fn run_headless(
         std::iter::once(primary).chain(additional).collect()
     };
 
-    let mut observations = Vec::with_capacity(streams.len());
-    let mut complete = true;
-    for stream in streams {
-        let (observation, current) = observe_workstream(stream);
-        observations.push(observation);
-        complete &= current;
-    }
+    Ok(streams)
+}
+
+#[cfg(unix)]
+fn chronos_headless_failure(status: &str, message: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let manifest = chronos_tui::CAPABILITIES;
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
             "version": 1,
             "mode": "headless",
-            "complete": complete,
-            "capability": "tasks.observe.v1",
-            "workstreams": observations,
+            "complete": false,
+            "peer": manifest.peer,
+            "capability": manifest.headless[0],
+            "status": status,
+            "workstreams": [],
         }))?
     );
-    if complete {
-        Ok(())
-    } else {
-        Err("one or more Chronos observations were not current".into())
-    }
+    Err(std::io::Error::other(message).into())
 }
 
 #[cfg(unix)]

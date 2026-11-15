@@ -13,6 +13,9 @@ tmux hub and feed journeys pass through the extracted binary.
 The peer now publishes a closed interactive/headless presentation capability
 manifest. Standalone and Workbench hosts can negotiate it before connecting;
 the manifest never enables task writes or scheduling authority.
+Standalone headless configuration failures retain the versioned peer envelope,
+and service observations distinguish not-sent, outcome-unknown, invalid reply,
+semantic refusal, resynchronization, limit, and capacity states.
 
 - Keep `chronos-tui` composable: no CLI parsing, terminal lifecycle, service
   startup, global shortcut policy, or process exit in the component boundary.
