@@ -1,4 +1,4 @@
-.PHONY: check fmt lint test doc qualify-tmux
+.PHONY: check fmt lint test doc qualify-tmux qualify-source
 check: fmt lint test doc
 fmt:
 	cargo fmt -p chronos-tui -p chronos-tui-cli -- --check
@@ -16,6 +16,5 @@ qualify-tmux:
 	python3 scripts/qualify-tmux.py target/debug/chronos-tui ../chronos/target/debug/chronos-service --dependencies-v6 --cancel-receipts
 	python3 scripts/qualify-watch.py target/debug/chronos-tui ../chronos/target/debug/chronos-service
 
-.PHONY: qualify-source
 qualify-source:
 	python3 scripts/qualify-source.py
