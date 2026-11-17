@@ -32,6 +32,7 @@ daimon-wire = { version = "=0.1.0", path = "../daimon/crates/daimon-wire" }
 
 [dev-dependencies]
 chronos-sdk-embedded = { version = "=0.1.0", path = "../chronos/sdk/embedded" }
+chronos-host = { version = "=0.1.0", path = "../chronos/host/chronos-host" }
 
 [lints.rust]
 unsafe_code = "forbid"

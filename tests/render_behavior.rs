@@ -1,4 +1,4 @@
-use chronos_model::{Row, View};
+use chronos_model::{CancelDisposition, CancelReceipt, Row, View};
 use chronos_protocol::Reference;
 use ratatui::{Terminal, backend::TestBackend, layout::Rect, widgets::Paragraph};
 
@@ -43,12 +43,13 @@ fn empty_offscreen_and_clipped_render_regions_are_safe() {
 #[test]
 fn bounded_terminal_view_renders_selection_state_and_escaped_ids() {
     let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
+    let reference = Reference {
+        task: "task\u{1b}[2J".into(),
+        incarnation: "0".into(),
+    };
     let view = View {
         rows: vec![Row {
-            reference: Reference {
-                task: "task\u{1b}[2J".into(),
-                incarnation: "0".into(),
-            },
+            reference: reference.clone(),
             phase: "ready",
             priority: 0,
             attempt: None,
@@ -57,6 +58,12 @@ fn bounded_terminal_view_renders_selection_state_and_escaped_ids() {
         }],
         revision: "1".into(),
         mutation_blocked: false,
+        marked_cancel: vec![reference],
+        cancel_receipts: vec![CancelReceipt {
+            task: "task\u{1b}[2J".into(),
+            incarnation: "0".into(),
+            disposition: CancelDisposition::Applied,
+        }],
         ..View::default()
     };
     terminal
@@ -72,6 +79,7 @@ fn bounded_terminal_view_renders_selection_state_and_escaped_ids() {
     assert!(output.contains("Chronos"));
     assert!(output.contains("ready"));
     assert!(output.contains("task"));
+    assert!(output.contains("[x][cA]"));
     assert!(!output.contains('\u{1b}'));
 }
 

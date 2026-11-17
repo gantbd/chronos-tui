@@ -15,10 +15,18 @@ cargo run --example composite --locked --offline -- /private/tmp/chronos-local
 
 The host separately starts `chronos-service` from the Chronos checkout. Private
 same-user Unix sockets are the first transport, not remote authentication.
-Each client has its own page, selection and exact cancellation confirmation.
+Each client has its own page, selection, bounded marked set and exact
+cancellation confirmation.
 Unknown mutation outcomes fence further writes until explicit refresh; never
 retry automatically. No execution agents or shared authoritative task state
 live in this presentation.
+
+The new-task form is an atomic batch composer, not a one-record demo. Type one
+task ID for the familiar singular case, or press Tab to add rows before Enter.
+It shows the selected row count, current UTF-8 byte count, and complete bounded
+draft; one submission sends one owner-side `SubmitGraph` containing 1–128
+unique IDs. Each ID is limited to 256 bytes. The TUI never loops over
+individual create calls or turns partial child success into an atomic claim.
 
 Embed `Component::new(client, writes)`, call nonblocking `poll()`, route
 closed `Input` values through `update(input, focused)`, and render with
@@ -33,6 +41,9 @@ Injected clients may be local transport or `chronos_sdk_embedded::native_client:
 Each instance admits one action and one view handoff; background service waits
 never run in its UI update path. Content-free client request/refusal/error and
 residence signals remain separate from engine/service/persistence signals.
+Batch qualification asserts that N tasks produce one mutation request, while
+Chronos's existing engine and service instrumentation records the content-free
+`SubmitGraph` operation and task count.
 
 ## Source qualification
 
@@ -203,11 +214,16 @@ presentation manifest without opening a service. It describes composition
 support and does not enable writes, scheduling controls, or task authority.
 
 Press `s` to inspect scheduling, `e` to propose enablement, `p` for global pause,
-`t` for selected-task pause, `b` for concurrency capacity, and `d` for not-before.
-Each control is a proposal: `y` confirms its exact observed revision/incarnation;
-Escape discards. Pausing affects new claims and does not interrupt execution.
-Read-only, stale and busy views cannot submit control forms. Unknown results
-require explicit inspection, with no automatic replay or executor-stop attestation.
+`t` for marked/current task pause, `b` for concurrency capacity, and `d` for
+marked/current not-before. Space uses the same bounded task workset as
+cancellation; an empty set falls back to the focused task. Task eligibility is
+not an atomic owner operation: every child is reobserved against the latest
+owner revision, preserves its unrelated eligibility field, and retains an
+applied/refused/unknown/not-sent disposition. Unknown results stop the run and
+leave later children unsent. Each proposal requires `y`; Escape discards.
+Pausing affects new claims and does not interrupt execution. Read-only, stale
+and busy views cannot submit control forms, and there is no automatic replay or
+executor-stop attestation.
 
 The not-before form accepts supported nonnegative whole Unix seconds or `clear`.
 Existing fractional or pre-epoch timestamps are displayed exactly and preserved
@@ -249,11 +265,15 @@ current hub session.
 ### Receipted task cancellation
 
 Start Chronos with `--atomic-state --allow-writes`, then open the hub with
-`--allow-writes --cancel-receipts`. Press **c** and confirm with **y** to cancel
-the exact task incarnation at the displayed revision. The hub submits one V3
-invocation. An uncertain reply triggers one read-only lookup of the same
-invocation. If the receipt is unavailable, the hub reports an unknown outcome
-and requires a manual refresh. This option applies to the current hub session.
+`--allow-writes --cancel-receipts`. Press **Space** to mark tasks on the current
+bounded page, then **c** and **y**; with no marks, the focused task is the
+one-item default. This is deliberately not described as an atomic batch.
+Chronos reobserves the owner revision before every child, submits a distinct V3
+invocation, and retains an applied/refused/unknown/not-sent disposition for each
+task. An uncertain reply triggers one read-only lookup of that exact invocation.
+If its receipt remains unavailable, the run stops, later children remain visibly
+not sent, and explicit refresh is required. This option applies to the current
+hub session.
 
 ### Host-bound text handoff
 

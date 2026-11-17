@@ -33,7 +33,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: gantbd/chronos
-          ref: 26366ec9172b48280d9bba3688572edf1c0d2719
+          ref: 43fdf6f33fa526899639f03cc32e398bcea86010
           path: chronos
           persist-credentials: false
       - name: Check out Daimon dependency

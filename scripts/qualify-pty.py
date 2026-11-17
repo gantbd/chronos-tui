@@ -145,7 +145,7 @@ def run_terminal(binary, state):
                         raise RuntimeError(f"{label} exceeded terminal observation bound")
 
             step("initial_view", b"", b"Observed 0 tasks", timeout=30)
-            step("task_form", b"n", b"New task ID")
+            step("task_form", b"n", b"Task batch")
             step("submit", b"pty-proof\r", b"Applied.")
             step("observe_disabled", b"s", b"Observed scheduling.")
             step("propose_enable", b"e", b"Enable scheduling controls?")

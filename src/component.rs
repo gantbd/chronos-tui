@@ -1,5 +1,5 @@
 use chronos_client::WireClientV1;
-use chronos_model::{Action, SchedulingChange, View, Worker};
+use chronos_model::{Action, EligibilityEdit, MAX_SUBMIT_BATCH, SchedulingChange, View, Worker};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{Frame, layout::Rect};
 
@@ -9,6 +9,7 @@ pub enum Input {
     Close,
     Text(char),
     Backspace,
+    NextItem,
     Enter,
     Escape,
     Up,
@@ -41,6 +42,7 @@ pub fn translate_key(key: KeyEvent) -> Input {
         KeyCode::Up => Input::Up,
         KeyCode::Down => Input::Down,
         KeyCode::Backspace => Input::Backspace,
+        KeyCode::Tab if key.kind == KeyEventKind::Press => Input::NextItem,
         KeyCode::Char(ch) if !ch.is_control() && key.kind == KeyEventKind::Press => Input::Text(ch),
         KeyCode::Enter if key.kind == KeyEventKind::Press => Input::Enter,
         KeyCode::Esc if key.kind == KeyEventKind::Press => Input::Escape,
@@ -52,6 +54,22 @@ pub fn translate_key(key: KeyEvent) -> Input {
 pub enum Lifecycle {
     Continue,
     CloseRequested,
+}
+
+/// Content-free terminal disposition for a dispatched task graph. Hosts use
+/// this to settle end-to-end instrumentation without parsing task identities.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskMutationDisposition {
+    Applied,
+    Refused,
+    OutcomeUnknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SchedulingMutationDisposition {
+    Applied,
+    Refused,
+    OutcomeUnknown,
 }
 
 /// Host-owned pane. The caller selects its client, region, focus and lifecycle.
@@ -79,7 +97,7 @@ enum EntryKind {
 impl EntryKind {
     fn label(self) -> &'static str {
         match self {
-            Self::Task => "New task ID (Enter submits, Esc discards)",
+            Self::Task => "Task batch (Tab adds row, Enter submits atomically, Esc discards)",
             Self::Capacity => {
                 "Concurrency capacity: positive integer (Enter proposes, Esc discards)"
             }
@@ -100,6 +118,27 @@ fn parse_not_before(value: &str) -> Result<Option<std::time::SystemTime>, ()> {
         ))
         .map(Some)
         .ok_or(())
+}
+
+fn task_ids(value: &str) -> Result<Vec<String>, &'static str> {
+    let ids: Vec<_> = value.split('\n').map(str::to_owned).collect();
+    if ids.is_empty() || ids.len() > MAX_SUBMIT_BATCH {
+        return Err("Task batch must contain 1–128 rows; nothing was sent.");
+    }
+    if ids.iter().any(|id| id.is_empty()) {
+        return Err("Every task row needs an ID; nothing was sent.");
+    }
+    if ids.iter().any(|id| id.len() > 256) {
+        return Err("Each task ID is limited to 256 UTF-8 bytes; nothing was sent.");
+    }
+    let unique = ids
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
+    if unique.len() != ids.len() {
+        return Err("Task IDs must be unique within the batch; nothing was sent.");
+    }
+    Ok(ids)
 }
 
 impl Component {
@@ -160,6 +199,10 @@ impl Component {
         self.state.view.pending_cancel.is_some() || self.state.view.scheduling.pending.is_some()
     }
 
+    pub(crate) fn is_busy(&self) -> bool {
+        self.worker.is_busy()
+    }
+
     pub(crate) fn feed_notice(&mut self) {
         self.state.notice =
             "Feed changed or is unavailable. Discard the old intent and refresh.".into();
@@ -184,6 +227,52 @@ impl Component {
 
     pub(crate) fn editing(&self) -> bool {
         self.state.entry.is_some()
+    }
+
+    pub(crate) fn composing_task_batch(&self) -> bool {
+        self.state.entry.is_some() && matches!(self.state.entry_kind, EntryKind::Task)
+    }
+
+    pub(crate) fn confirming_cancel_batch(&self) -> bool {
+        self.state.view.pending_cancel.is_some()
+    }
+
+    pub(crate) fn confirming_scheduling(&self) -> bool {
+        self.state.view.scheduling.pending.is_some()
+    }
+
+    pub(crate) fn confirming_eligibility_batch(&self) -> bool {
+        self.state
+            .view
+            .scheduling
+            .pending
+            .as_deref()
+            .is_some_and(|pending| pending.contains("exact task"))
+    }
+
+    pub(crate) fn task_mutation_disposition(&self) -> TaskMutationDisposition {
+        if self.state.view.status.starts_with("Applied.") {
+            TaskMutationDisposition::Applied
+        } else if self.state.view.status.contains("outcome unknown") {
+            TaskMutationDisposition::OutcomeUnknown
+        } else {
+            TaskMutationDisposition::Refused
+        }
+    }
+
+    pub(crate) fn scheduling_mutation_disposition(&self) -> SchedulingMutationDisposition {
+        let status = &self.state.view.scheduling.status;
+        if status.starts_with("Applied") || status.contains("control applied") {
+            SchedulingMutationDisposition::Applied
+        } else if status.contains("unknown") || status.contains("unavailable") {
+            SchedulingMutationDisposition::OutcomeUnknown
+        } else {
+            SchedulingMutationDisposition::Refused
+        }
+    }
+
+    pub(crate) fn mutation_recovery_required(&self) -> bool {
+        self.state.view.manual_refresh_required
     }
 
     pub(crate) fn status(&self) -> String {
@@ -224,7 +313,13 @@ impl State {
                 Input::Enter if !busy => {
                     let value = self.entry.take().unwrap();
                     let action = match self.entry_kind {
-                        EntryKind::Task => Some(Action::Submit(value.clone())),
+                        EntryKind::Task => match task_ids(&value) {
+                            Ok(ids) => Some(Action::SubmitBatch(ids)),
+                            Err(notice) => {
+                                self.notice = notice.into();
+                                None
+                            }
+                        },
                         EntryKind::Capacity => {
                             value.parse::<usize>().ok().filter(|n| *n > 0).map(|n| {
                                 Action::PlanScheduling(SchedulingChange::SetConcurrencyLimit(n))
@@ -232,28 +327,45 @@ impl State {
                         }
                         EntryKind::NotBefore => {
                             parse_not_before(&value).ok().and_then(|not_before| {
-                                self.view.scheduling.selected.as_ref().map(|selected| {
-                                    Action::PlanScheduling(
-                                        SchedulingChange::SetSelectedEligibility {
-                                            paused: selected.paused,
-                                            not_before,
-                                        },
-                                    )
+                                self.has_eligibility_targets().then_some({
+                                    Action::PlanScheduling(SchedulingChange::SetEligibility(
+                                        EligibilityEdit::SetNotBefore(not_before),
+                                    ))
                                 })
                             })
                         }
                     };
                     if action.is_none() {
                         self.entry = Some(value);
-                        self.notice = "Invalid value; nothing was sent.".into();
+                        if self.notice.is_empty() {
+                            self.notice = "Invalid value; nothing was sent.".into();
+                        }
                     }
                     action
+                }
+                Input::NextItem if matches!(self.entry_kind, EntryKind::Task) => {
+                    let rows = id.split('\n').count();
+                    let current = id.rsplit('\n').next().unwrap_or_default();
+                    if current.is_empty() {
+                        self.notice = "Finish the current task ID before adding a row.".into();
+                    } else if rows == MAX_SUBMIT_BATCH {
+                        self.notice =
+                            format!("Atomic task batches are limited to {MAX_SUBMIT_BATCH} rows.");
+                    } else {
+                        id.push('\n');
+                        self.notice = format!("{} task rows in this atomic batch.", rows + 1);
+                    }
+                    None
                 }
                 Input::Backspace => {
                     id.pop();
                     None
                 }
-                Input::Text(ch) if !ch.is_control() && id.len() + ch.len_utf8() <= 256 => {
+                Input::Text(ch)
+                    if !ch.is_control()
+                        && id.rsplit('\n').next().unwrap_or_default().len() + ch.len_utf8()
+                            <= 256 =>
+                {
                     id.push(ch);
                     None
                 }
@@ -277,6 +389,9 @@ impl State {
                 Input::Down => Some(Action::Down),
                 Input::Text('r') => Some(Action::Refresh),
                 Input::Text(']') => Some(Action::NextPage),
+                Input::Text(' ') if self.writes && !self.view.mutation_blocked && !busy => {
+                    Some(Action::ToggleCancelSelection)
+                }
                 Input::Text('c') => Some(Action::PlanCancel),
                 Input::Text('n') if self.writes && !self.view.mutation_blocked && !busy => {
                     self.entry_kind = EntryKind::Task;
@@ -295,11 +410,16 @@ impl State {
                     )))
                 }
                 Input::Text('t') if self.can_schedule(busy) => {
-                    self.view.scheduling.selected.as_ref().map(|selected| {
-                        Action::PlanScheduling(SchedulingChange::SetSelectedEligibility {
-                            paused: !selected.paused,
-                            not_before: selected.not_before,
-                        })
+                    let targets = if self.view.marked_cancel.is_empty() {
+                        self.view.scheduling.selected.iter().collect::<Vec<_>>()
+                    } else {
+                        self.view.scheduling.marked.iter().collect::<Vec<_>>()
+                    };
+                    (!targets.is_empty()).then_some({
+                        let paused = !targets.iter().all(|target| target.paused);
+                        Action::PlanScheduling(SchedulingChange::SetEligibility(
+                            EligibilityEdit::SetPaused(paused),
+                        ))
                     })
                 }
                 Input::Text('b') if self.can_schedule(busy) && self.view.scheduling.enabled => {
@@ -307,9 +427,7 @@ impl State {
                     self.entry = Some(String::new());
                     None
                 }
-                Input::Text('d')
-                    if self.can_schedule(busy) && self.view.scheduling.selected.is_some() =>
-                {
+                Input::Text('d') if self.can_schedule(busy) && self.has_eligibility_targets() => {
                     self.entry_kind = EntryKind::NotBefore;
                     self.entry = Some(String::new());
                     None
@@ -324,6 +442,14 @@ impl State {
             && self.view.scheduling.supported
             && !self.view.scheduling.mutation_blocked
             && !busy
+    }
+
+    fn has_eligibility_targets(&self) -> bool {
+        if self.view.marked_cancel.is_empty() {
+            self.view.scheduling.selected.is_some()
+        } else {
+            self.view.scheduling.marked.len() == self.view.marked_cancel.len()
+        }
     }
 }
 
@@ -369,19 +495,47 @@ mod tests {
         }
         deliver(&mut pane);
         pane.update(Input::Text('n'), true);
-        for ch in "embedded-pane".chars() {
-            pane.update(Input::Text(ch), true);
+        for (index, id) in ["embedded-one", "embedded-two", "embedded-three"]
+            .into_iter()
+            .enumerate()
+        {
+            if index > 0 {
+                pane.update(Input::NextItem, true);
+            }
+            for ch in id.chars() {
+                pane.update(Input::Text(ch), true);
+            }
         }
         pane.update(Input::Enter, true);
         deliver(&mut pane);
-        assert_eq!(pane.state.view.rows[0].phase, "ready");
+        assert_eq!(pane.state.view.rows.len(), 3);
+        assert!(pane.state.view.rows.iter().all(|row| row.phase == "ready"));
+        for index in 0..3 {
+            if index > 0 {
+                pane.update(Input::Down, true);
+                deliver(&mut pane);
+            }
+            pane.update(Input::Text(' '), true);
+            deliver(&mut pane);
+        }
+        assert_eq!(pane.state.view.marked_cancel.len(), 3);
         pane.update(Input::Text('c'), true);
         deliver(&mut pane);
-        assert!(pane.state.view.pending_cancel.is_some());
+        assert_eq!(
+            pane.state.view.pending_cancel.as_deref(),
+            Some("3 marked tasks")
+        );
         pane.update(Input::Text('y'), true);
         deliver(&mut pane);
-        assert_eq!(pane.state.view.rows[0].phase, "cancelled");
-        assert_eq!(pane.state.view.signals.requests, 5);
+        assert!(
+            pane.state
+                .view
+                .rows
+                .iter()
+                .all(|row| row.phase == "cancelled")
+        );
+        assert_eq!(pane.state.view.cancel_receipts.len(), 3);
+        assert_eq!(pane.state.view.signals.requests, 9);
         assert_eq!(pane.state.view.signals.backend_errors, 0);
         assert_eq!(pane.update(Input::Close, true), Lifecycle::CloseRequested);
     }
@@ -419,10 +573,42 @@ mod tests {
         assert_eq!(state.entry.as_ref().unwrap().len(), 256);
         assert!(state.update(Input::Enter, true, true).1.is_none());
         assert!(state.entry.is_some());
-        assert!(
-            matches!(state.update(Input::Enter, true, false).1, Some(Action::Submit(id)) if id.len() == 256)
-        );
+        assert!(matches!(
+            state.update(Input::Enter, true, false).1,
+            Some(Action::SubmitBatch(ids)) if ids.len() == 1 && ids[0].len() == 256
+        ));
         assert!(state.entry.is_none());
+    }
+
+    #[test]
+    fn batch_composer_is_bounded_and_refuses_empty_or_duplicate_rows() {
+        let mut state = State {
+            entry: Some("same".into()),
+            ..State::default()
+        };
+        state.update(Input::NextItem, true, false);
+        assert_eq!(state.entry.as_deref(), Some("same\n"));
+        state.update(Input::NextItem, true, false);
+        assert!(state.notice.contains("Finish"));
+        for ch in "same".chars() {
+            state.update(Input::Text(ch), true, false);
+        }
+        assert!(state.update(Input::Enter, true, false).1.is_none());
+        assert!(state.notice.contains("unique"));
+        assert_eq!(state.entry.as_deref(), Some("same\nsame"));
+
+        state.entry = Some(
+            (0..MAX_SUBMIT_BATCH)
+                .map(|index| format!("task-{index}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        state.update(Input::NextItem, true, false);
+        assert!(state.notice.contains("limited"));
+        assert_eq!(
+            state.entry.as_ref().unwrap().split('\n').count(),
+            MAX_SUBMIT_BATCH
+        );
     }
 
     #[test]
@@ -450,6 +636,10 @@ mod tests {
             Input::Ignore
         );
         assert_eq!(translate_key(key), Input::Text('y'));
+        assert_eq!(
+            translate_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            Input::NextItem
+        );
     }
 }
 #[cfg(test)]

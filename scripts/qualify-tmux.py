@@ -86,7 +86,7 @@ def qualify(tui, daemon, dependencies_v6=False, cancel_receipts=False):
 
                 expect("Workstreams", "Inspector", "Blocked 0", "Atlas / Planning", "Observed 0 tasks")
                 keys("n")
-                expect("New task ID")
+                expect("Task batch")
                 text("atlas-plan")
                 keys("Enter")
                 expect("Ready 1", "atlas-plan", "Applied.")
@@ -95,7 +95,7 @@ def qualify(tui, daemon, dependencies_v6=False, cancel_receipts=False):
                 keys("Tab", "Down", "Enter")
                 expect("Boreal / Delivery  ·", "Ready 0")
                 keys("n")
-                expect("New task ID")
+                expect("Task batch")
                 text("boreal-ship")
                 keys("Enter")
                 board = expect("Ready 1", "boreal-ship", "Applied.")

@@ -24,8 +24,13 @@ impl SchedulingAuthorizerV1 for Owner {
     }
 }
 fn pane() -> Component {
+    pane_with(&["fixture"])
+}
+fn pane_with(tasks: &[&str]) -> Component {
     let mut engine = Engine::new();
-    engine.submit(Task::new("fixture", "")).unwrap();
+    for task in tasks {
+        engine.submit(Task::new(*task, "")).unwrap();
+    }
     let service = Service::new(
         engine,
         Owner,
@@ -65,7 +70,14 @@ fn entry(pane: &mut Component, key: char, value: &str) {
 }
 fn key_confirm(pane: &mut Component) {
     key(pane, 'y');
-    assert!(pane.state.view.scheduling.status.contains("applied"));
+    assert!(
+        pane.state
+            .view
+            .scheduling
+            .status
+            .to_lowercase()
+            .contains("applied")
+    );
 }
 #[test]
 fn terminal_gestures_drive_guarded_controls_and_preserve_existing_time_on_pause() {
@@ -164,4 +176,54 @@ fn readonly_busy_and_invalid_forms_do_not_dispatch_or_lose_input() {
         assert!(parse_not_before(invalid).is_err());
     }
     assert_eq!(parse_not_before("clear"), Ok(None));
+}
+
+#[test]
+fn marked_tasks_receive_independent_visible_eligibility_receipts() {
+    use chronos_model::EligibilityDisposition;
+
+    let mut pane = pane_with(&["one", "two", "three"]);
+    deliver(&mut pane);
+    key(&mut pane, 's');
+    key(&mut pane, 'e');
+    key_confirm(&mut pane);
+    key(&mut pane, 'r');
+    for index in 0..3 {
+        if index > 0 {
+            pane.update(Input::Down, true);
+            deliver(&mut pane);
+        }
+        key(&mut pane, ' ');
+    }
+    key(&mut pane, 's');
+    assert_eq!(pane.state.view.scheduling.marked.len(), 3);
+    key(&mut pane, 't');
+    assert!(
+        pane.state
+            .view
+            .scheduling
+            .pending
+            .as_deref()
+            .is_some_and(|pending| pending.contains("3 exact tasks"))
+    );
+    key_confirm(&mut pane);
+    assert_eq!(pane.state.view.scheduling.eligibility_receipts.len(), 3);
+    assert!(
+        pane.state
+            .view
+            .scheduling
+            .eligibility_receipts
+            .iter()
+            .all(|receipt| receipt.disposition == EligibilityDisposition::Applied)
+    );
+    key(&mut pane, 'r');
+    key(&mut pane, 's');
+    assert!(
+        pane.state
+            .view
+            .scheduling
+            .marked
+            .iter()
+            .all(|target| target.paused)
+    );
 }

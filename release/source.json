@@ -4,7 +4,7 @@
   "inputs": {
     "chronos": {
       "checkout": "../chronos",
-      "revision": "26366ec9172b48280d9bba3688572edf1c0d2719"
+      "revision": "43fdf6f33fa526899639f03cc32e398bcea86010"
     },
     "moira": {
       "checkout": "../moira",
@@ -12,7 +12,7 @@
     },
     "daimon": {
       "checkout": "../daimon",
-      "revision": "07caa33d835c634947cc16109d1c999581501835"
+      "revision": "8d4238ce6433b250c2f081f7c9508905778994c0"
     }
   },
   "localSiblingBuild": true,

@@ -25,6 +25,18 @@ pub struct Workstream {
     pub directory: PathBuf,
 }
 
+/// Host-invoked presentation intents. These enter the same bounded forms and
+/// exact-confirmation paths as keyboard input; they do not bypass Chronos
+/// authority or dispatch a mutation directly.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkbenchIntent {
+    NewTask,
+    CancelSelectedTask,
+    OpenSchedule,
+    SetTaskPause,
+    SetTaskNotBefore,
+}
+
 pub fn validate_workstreams(workstreams: &[Workstream]) -> Result<(), &'static str> {
     if !(1..=32).contains(&workstreams.len()) {
         return Err("provide between one and 32 workstreams");
@@ -46,7 +58,7 @@ pub fn validate_workstreams(workstreams: &[Workstream]) -> Result<(), &'static s
     Ok(())
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Surface {
     Board,
     Tasks,
@@ -97,6 +109,7 @@ pub struct Hub {
     navigating: bool,
     surface: Surface,
     writes: bool,
+    scheduling: bool,
     search: Option<Search>,
     explanation: Option<(Selection, Detail)>,
     presence: Option<Presence>,
@@ -184,6 +197,7 @@ impl Hub {
             navigating: false,
             surface: Surface::Board,
             writes,
+            scheduling,
             search: None,
             explanation: None,
             presence: None,
@@ -253,6 +267,155 @@ impl Hub {
         host: impl Fn(HandoffRequest) -> HandoffResult + Send + Sync + 'static,
     ) {
         self.handoff.host = Some(std::sync::Arc::new(host));
+    }
+
+    pub const fn writes_enabled(&self) -> bool {
+        self.writes
+    }
+
+    pub const fn scheduling_enabled(&self) -> bool {
+        self.scheduling
+    }
+
+    /// Whether the active workstream is composing an owner-atomic task graph.
+    /// A composition host may keep Tab inside this form instead of treating it
+    /// as a global focus gesture.
+    pub fn composing_task_batch(&self) -> bool {
+        self.streams[self.active].component.composing_task_batch()
+    }
+
+    /// Whether the active peer is holding an exact bounded cancellation plan.
+    pub fn confirming_cancel_batch(&self) -> bool {
+        self.streams[self.active]
+            .component
+            .confirming_cancel_batch()
+    }
+
+    pub fn confirming_scheduling(&self) -> bool {
+        self.streams[self.active].component.confirming_scheduling()
+    }
+
+    pub fn confirming_eligibility_batch(&self) -> bool {
+        self.streams[self.active]
+            .component
+            .confirming_eligibility_batch()
+    }
+
+    /// Classifies the last delivered task mutation without exposing task IDs.
+    pub fn task_mutation_disposition(&self) -> crate::TaskMutationDisposition {
+        self.streams[self.active]
+            .component
+            .task_mutation_disposition()
+    }
+
+    pub fn scheduling_mutation_disposition(&self) -> crate::SchedulingMutationDisposition {
+        self.streams[self.active]
+            .component
+            .scheduling_mutation_disposition()
+    }
+
+    pub fn mutation_recovery_required(&self) -> bool {
+        self.streams
+            .iter()
+            .any(|stream| stream.component.mutation_recovery_required())
+    }
+
+    /// Enters one peer-owned interactive workflow from a composition host.
+    /// Current revision, freshness, pending work and selection are checked
+    /// before the ordinary component input is admitted.
+    pub fn invoke_workbench(
+        &mut self,
+        intent: WorkbenchIntent,
+    ) -> Result<&'static str, &'static str> {
+        self.navigating = false;
+        match intent {
+            WorkbenchIntent::OpenSchedule => {
+                if !self.scheduling {
+                    return Err("Chronos scheduling was not selected for this session");
+                }
+                self.surface = Surface::Schedule;
+                Ok("Opened Chronos scheduling")
+            }
+            WorkbenchIntent::SetTaskPause | WorkbenchIntent::SetTaskNotBefore => {
+                if !self.writes || !self.scheduling {
+                    return Err("Chronos scheduling writes are disabled for this session");
+                }
+                let stream = &self.streams[self.active];
+                let view = stream.component.view();
+                let observed_targets = if view.marked_cancel.is_empty() {
+                    usize::from(view.scheduling.selected.is_some())
+                } else {
+                    view.scheduling.marked.len()
+                };
+                let expected_targets = view.marked_cancel.len().max(1);
+                if !view.scheduling.enabled
+                    || view.scheduling.mutation_blocked
+                    || observed_targets != expected_targets
+                {
+                    return Err(
+                        "Refresh Chronos scheduling and every marked/current eligibility before writing",
+                    );
+                }
+                if stream.component.editing()
+                    || stream.component.has_pending()
+                    || stream.component.is_busy()
+                {
+                    return Err("Chronos already has an interactive action in flight");
+                }
+                self.surface = Surface::Schedule;
+                let (key, message) = match intent {
+                    WorkbenchIntent::SetTaskPause => (
+                        't',
+                        "Opened Chronos's marked/current task-pause confirmation",
+                    ),
+                    WorkbenchIntent::SetTaskNotBefore => {
+                        ('d', "Opened Chronos's marked/current not-before form")
+                    }
+                    _ => unreachable!(),
+                };
+                self.update(KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE));
+                Ok(message)
+            }
+            WorkbenchIntent::NewTask => {
+                if !self.writes {
+                    return Err("Chronos writes are disabled for this session");
+                }
+                let stream = &self.streams[self.active];
+                if self.current_view().is_none() {
+                    return Err("Chronos task state is stale; refresh before writing");
+                }
+                if stream.component.editing()
+                    || stream.component.has_pending()
+                    || stream.component.is_busy()
+                {
+                    return Err("Chronos already has an interactive action in flight");
+                }
+                self.surface = Surface::Board;
+                self.update(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+                Ok("Opened the bounded Chronos new-task form")
+            }
+            WorkbenchIntent::CancelSelectedTask => {
+                if !self.writes {
+                    return Err("Chronos writes are disabled for this session");
+                }
+                let stream = &self.streams[self.active];
+                let Some(view) = self.current_view() else {
+                    return Err("Chronos task state is stale; refresh before writing");
+                };
+                if view.rows.get(view.selected).is_none() {
+                    return Err("Select a current Chronos task before cancelling");
+                }
+                if stream.component.editing()
+                    || stream.component.has_pending()
+                    || stream.component.is_busy()
+                {
+                    return Err("Chronos already has an interactive action in flight");
+                }
+                self.surface = Surface::Board;
+                self.update(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+                Ok("Opened Chronos's exact marked/current cancellation confirmation")
+            }
+        }
     }
 
     fn start_handoff(&mut self, action: HandoffAction, target: Selection) {
@@ -822,20 +985,20 @@ impl Hub {
         let mut footer = vec![Line::from(if self.navigating {
             " ↑/↓ workstream   Enter return to tasks   Tab switch focus   q quit"
         } else if self.surface == Surface::Schedule {
-            " w switch   ↑/↓ task   a load agenda   4 summary   r refresh tasks   q quit"
+            " w switch   ↑/↓ task   Space mark   a agenda   s refresh schedule   r tasks   q quit"
         } else if self.surface == Surface::Dependencies {
             " w switch   / search   ↑/↓ task   x explain   g graph   r refresh   q quit"
         } else if self.surface == Surface::Overview {
             " ↑/↓ workstream   Enter open board   q quit"
         } else if self.surface == Surface::Board {
-            " w switch   / search   ←/→ lane   ↑/↓ task   r refresh   ] next page   n new   c cancel   q quit"
+            " w switch   / search   ←/→ lane   ↑/↓ task   Space mark   r refresh   n new   c cancel set   q quit"
         } else {
-            " w switch   / search   ↑/↓ task   r refresh   ] next page   n new   c cancel   q quit"
+            " w switch   / search   ↑/↓ task   Space mark   r refresh   ] next   n new   c cancel set   q quit"
         })];
         if self.surface == Surface::Tasks && self.handoff.host.is_some() {
             footer.push(Line::from(" h export handoff   v review handoff"));
         } else if view.scheduling.supported && self.surface != Surface::Overview {
-            footer.push(Line::from(" s inspect scheduling   e enable   p global pause   t task pause   b capacity   d not-before"));
+            footer.push(Line::from(" e enable   p global pause   t set marked/current pause   b capacity   d marked/current not-before"));
         }
         frame.render_widget(Paragraph::new(footer).style(DIM), keys);
     }
@@ -1178,12 +1341,13 @@ impl Hub {
             let s = &view.scheduling;
             let mut text = if s.supported {
                 format!(
-                    "Scheduling revision {}\nEnabled {}   Paused {}\nCapacity {:?}   Available {:?}\n\nSelected task not-before\n{}\n\nPress s to refresh.\nTask date ranges are unavailable.",
+                    "Scheduling revision {}\nEnabled {}   Paused {}\nCapacity {:?}   Available {:?}\nMarked eligibility set {}\n\nSelected task not-before\n{}\n\nPress s to refresh.\nTask date ranges are unavailable.",
                     s.revision,
                     s.enabled,
                     s.paused,
                     s.capacity,
                     s.available,
+                    s.marked.len(),
                     format_not_before(s.selected.as_ref().and_then(|entry| entry.not_before)),
                 )
             } else {
@@ -1374,7 +1538,8 @@ fn board(frame: &mut Frame<'_>, area: Rect, view: &View, focused: bool) {
                 String::new()
             };
             items.push(ListItem::new(format!(
-                "{detail}{}",
+                "{} {detail}{}",
+                crate::task_badges(view, row),
                 display_id(&row.reference.task)
             )));
         }
@@ -1428,4 +1593,140 @@ fn inspector(frame: &mut Frame<'_>, area: Rect, view: &View, explanation: &str) 
             .wrap(Wrap { trim: true }),
         area,
     );
+}
+
+#[cfg(test)]
+mod workbench_tests {
+    use super::*;
+    use chronos_host::scheduling::{SchedulingRequestV1, SchedulingResponseV1};
+    use chronos_sdk_embedded::service::scheduling::SchedulingAuthorizerV1;
+    use chronos_sdk_embedded::{
+        engine::Engine,
+        host::native::RequestV1,
+        native_client::EmbeddedClient,
+        service::{Authorizer, Limits, Service},
+    };
+
+    struct SyntheticOwner;
+
+    impl Authorizer for SyntheticOwner {
+        fn allows(&mut self, _: &RequestV1) -> bool {
+            true
+        }
+    }
+
+    impl SchedulingAuthorizerV1 for SyntheticOwner {
+        fn allows_scheduling(&mut self, _: &SchedulingRequestV1) -> bool {
+            true
+        }
+
+        fn allows_scheduling_result(
+            &mut self,
+            _: &SchedulingRequestV1,
+            _: &SchedulingResponseV1,
+        ) -> bool {
+            true
+        }
+    }
+
+    fn hub(writes: bool, scheduling: bool) -> Hub {
+        let service = Service::new(
+            Engine::new(),
+            SyntheticOwner,
+            Limits {
+                max_graph_tasks: 8,
+                max_page_entries: 64,
+            },
+        );
+        let client = EmbeddedClient::new(service, chronos_local::wire_limits());
+        let component = if scheduling {
+            Component::new_with_scheduling(client, writes)
+        } else {
+            Component::new(client, writes)
+        };
+        Hub {
+            streams: vec![Stream {
+                name: "Embedded".into(),
+                directory: "embedded".into(),
+                component,
+                watch: None,
+                moira: None,
+                refreshing: false,
+                observation: 0,
+            }],
+            active: 0,
+            navigating: false,
+            surface: Surface::Board,
+            writes,
+            scheduling,
+            search: None,
+            explanation: None,
+            presence: None,
+            presence_open: false,
+            presence_scroll: 0,
+            attempt_lookup: None,
+            agenda: None,
+            agenda_visible: false,
+            graph: None,
+            graph_visible: false,
+            plan: None,
+            handoff: Handoff::default(),
+        }
+    }
+
+    fn poll_until(hub: &mut Hub, condition: impl Fn(&Hub) -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !condition(hub) {
+            hub.poll();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "embedded workbench intent did not settle"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn workbench_intents_enter_the_existing_bounded_and_confirmed_flows() {
+        let mut hub = hub(true, true);
+        poll_until(&mut hub, |hub| hub.has_current_tasks());
+        assert_eq!(
+            hub.invoke_workbench(WorkbenchIntent::NewTask),
+            Ok("Opened the bounded Chronos new-task form")
+        );
+        assert!(hub.streams[0].component.editing());
+        for character in "palette-task".chars() {
+            hub.update(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        hub.update(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        poll_until(&mut hub, |hub| {
+            !hub.streams[0].component.view().rows.is_empty()
+        });
+        assert_eq!(
+            hub.invoke_workbench(WorkbenchIntent::CancelSelectedTask),
+            Ok("Opened Chronos's exact marked/current cancellation confirmation")
+        );
+        poll_until(&mut hub, |hub| {
+            hub.streams[0].component.view().pending_cancel.is_some()
+        });
+        assert_eq!(
+            hub.invoke_workbench(WorkbenchIntent::OpenSchedule),
+            Ok("Opened Chronos scheduling")
+        );
+        assert_eq!(hub.surface, Surface::Schedule);
+    }
+
+    #[test]
+    fn workbench_intents_refuse_absent_launch_authority() {
+        let mut hub = hub(false, false);
+        poll_until(&mut hub, |hub| hub.has_current_tasks());
+        assert_eq!(
+            hub.invoke_workbench(WorkbenchIntent::NewTask),
+            Err("Chronos writes are disabled for this session")
+        );
+        assert_eq!(
+            hub.invoke_workbench(WorkbenchIntent::OpenSchedule),
+            Err("Chronos scheduling was not selected for this session")
+        );
+    }
 }
