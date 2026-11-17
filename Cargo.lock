@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "keystone-storage"
-version = "0.0.1"
+version = "0.0.1-chronos.1"
 
 [[package]]
 name = "libc"

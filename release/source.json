@@ -4,20 +4,20 @@
   "inputs": {
     "chronos": {
       "checkout": "../chronos",
-      "revision": "bfb722bced6b4b65ce6b669b5afd9226bcbb1c56"
+      "revision": "26366ec9172b48280d9bba3688572edf1c0d2719"
     },
     "moira": {
       "checkout": "../moira",
-      "revision": "1ce4b0ad4a09d1a0602eb9f3afbf1ff31cbc12c2"
+      "revision": "92018a832b6e2a0cfcb990f74818723ef2478434"
     },
     "daimon": {
       "checkout": "../daimon",
-      "revision": "197edccaa1f840d72933ae35e159af6d411df82f"
+      "revision": "07caa33d835c634947cc16109d1c999581501835"
     }
   },
   "localSiblingBuild": true,
   "immutableSourceQualified": true,
-  "remoteReachabilityQualified": false,
+  "remoteReachabilityQualified": true,
   "cratesIoPublished": false,
   "qualifiedTuiRevision": "3352a9972d7f0d5a383c0d42845649872d5819a9"
 }
