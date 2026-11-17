@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 use chronos_model::{View, display_id};
+use chronos_protocol::{RetrySafety, TaskSpec};
 mod agenda;
 mod attempt;
 #[cfg(unix)]
@@ -97,8 +98,9 @@ pub fn draw_in(frame: &mut Frame<'_>, area: Rect, view: &View, entry: Option<&st
         area,
         view,
         entry,
+        None,
         notice,
-        "Task batch (Tab adds row, Enter submits atomically, Esc discards)",
+        "Task batch (Tab adds row, Enter reviews exact graph, Esc discards)",
     );
 }
 pub(crate) fn draw_form_in(
@@ -106,6 +108,7 @@ pub(crate) fn draw_form_in(
     area: Rect,
     view: &View,
     entry: Option<&str>,
+    task_review: Option<(&[TaskSpec], usize)>,
     notice: &str,
     label: &str,
 ) {
@@ -143,7 +146,28 @@ pub(crate) fn draw_form_in(
     }
     frame.render_widget(Paragraph::new(heading), areas[0]);
     let composing_tasks = entry.filter(|_| label.starts_with("Task batch"));
-    let rows: Vec<_> = if let Some(batch) = composing_tasks {
+    let rows: Vec<_> = if let Some((tasks, _)) = task_review {
+        tasks
+            .iter()
+            .enumerate()
+            .map(|(index, task)| {
+                let retry = match task.retry_safety {
+                    RetrySafety::FenceUnknown => "fence",
+                    RetrySafety::ConnectorIdempotent => "idempotent",
+                };
+                ListItem::new(format!(
+                    "{:>3}  p={:<4} attempts={:<3} retry={:<10} deps={:<2} caps={:<2} {}",
+                    index + 1,
+                    task.priority,
+                    task.max_attempts,
+                    retry,
+                    task.dependencies.len(),
+                    task.capabilities.len(),
+                    display_id(&task.id)
+                ))
+            })
+            .collect()
+    } else if let Some(batch) = composing_tasks {
         batch
             .split('\n')
             .enumerate()
@@ -164,14 +188,18 @@ pub(crate) fn draw_form_in(
             .collect()
     };
     let list = List::new(rows)
-        .block(Block::bordered().title(if composing_tasks.is_some() {
+        .block(Block::bordered().title(if task_review.is_some() {
+            "Reviewed atomic task graph · selected row"
+        } else if composing_tasks.is_some() {
             "Atomic task batch · current row selected"
         } else {
             "Tasks · current bounded page"
         }))
         .highlight_style(Style::default().fg(Color::Cyan))
         .highlight_symbol("▶ ");
-    let selected = if let Some(batch) = composing_tasks {
+    let selected = if let Some((_, selected)) = task_review {
+        Some(selected)
+    } else if let Some(batch) = composing_tasks {
         Some(batch.split('\n').count().saturating_sub(1))
     } else if view.rows.is_empty() {
         None
@@ -180,7 +208,7 @@ pub(crate) fn draw_form_in(
     };
     let mut state = ListState::default().with_selected(selected);
     frame.render_stateful_widget(list, areas[1], &mut state);
-    let status = status_text(view, entry, notice, label);
+    let status = status_text(view, entry, task_review, notice, label);
     frame.render_widget(Paragraph::new(status).wrap(Wrap { trim: false }), areas[2]);
     frame.render_widget(
         Paragraph::new(if view.scheduling.supported {
@@ -189,7 +217,13 @@ pub(crate) fn draw_form_in(
         areas[3],
     );
 }
-fn status_text(view: &View, entry: Option<&str>, notice: &str, label: &str) -> String {
+fn status_text(
+    view: &View,
+    entry: Option<&str>,
+    task_review: Option<(&[TaskSpec], usize)>,
+    notice: &str,
+    label: &str,
+) -> String {
     if let Some(id) = entry {
         if label.starts_with("Task batch") {
             let count = id.split('\n').count();
@@ -206,6 +240,25 @@ fn status_text(view: &View, entry: Option<&str>, notice: &str, label: &str) -> S
         } else {
             format!("{}: {}\n{}", label, display_id(id), notice)
         }
+    } else if let Some((tasks, selected)) = task_review {
+        let task = &tasks[selected];
+        let retry = match task.retry_safety {
+            RetrySafety::FenceUnknown => "fence",
+            RetrySafety::ConnectorIdempotent => "idempotent",
+        };
+        format!(
+            "Review {} exact task(s) · selected {} · p={} · attempts={} · retry={} · deps={} [{}] · caps={} [{}]\nEnter submits once · ↑/↓ row · p priority · d dependencies · c capabilities · a attempts · r retry · Esc edits IDs\n{}",
+            tasks.len(),
+            display_id(&task.id),
+            task.priority,
+            task.max_attempts,
+            retry,
+            task.dependencies.len(),
+            task.dependencies.join(", "),
+            task.capabilities.len(),
+            task.capabilities.join(", "),
+            notice
+        )
     } else if let Some(plan) = &view.scheduling.pending {
         format!("{plan}? y confirms; Esc discards. Exact observed revision retained.\n{notice}")
     } else if let Some(task) = &view.pending_cancel {

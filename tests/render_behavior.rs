@@ -111,5 +111,5 @@ fn confirmation_and_entry_render_instead_of_ambiguous_mutation_gestures() {
         .iter()
         .map(|cell| cell.symbol())
         .collect();
-    assert!(output.contains("Enter submits"));
+    assert!(output.contains("Enter reviews"));
 }

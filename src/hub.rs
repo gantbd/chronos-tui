@@ -1699,6 +1699,8 @@ mod workbench_tests {
             hub.update(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
         }
         hub.update(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(hub.streams[0].component.composing_task_batch());
+        hub.update(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         poll_until(&mut hub, |hub| {
             !hub.streams[0].component.view().rows.is_empty()
         });

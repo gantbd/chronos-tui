@@ -1,5 +1,6 @@
 use chronos_client::WireClientV1;
 use chronos_model::{Action, EligibilityEdit, MAX_SUBMIT_BATCH, SchedulingChange, View, Worker};
+use chronos_protocol::{RetrySafety, TaskSpec};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{Frame, layout::Rect};
 
@@ -84,6 +85,8 @@ struct State {
     entry_kind: EntryKind,
     view: View,
     entry: Option<String>,
+    task_batch: Option<Vec<TaskSpec>>,
+    task_batch_selected: usize,
     notice: String,
     writes: bool,
 }
@@ -91,13 +94,27 @@ struct State {
 enum EntryKind {
     #[default]
     Task,
+    TaskPriority,
+    TaskMaxAttempts,
+    TaskDependencies,
+    TaskCapabilities,
     Capacity,
     NotBefore,
 }
 impl EntryKind {
     fn label(self) -> &'static str {
         match self {
-            Self::Task => "Task batch (Tab adds row, Enter submits atomically, Esc discards)",
+            Self::Task => "Task batch (Tab adds row, Enter reviews exact graph, Esc discards)",
+            Self::TaskPriority => "Priority: signed integer (Enter applies, Esc returns to review)",
+            Self::TaskMaxAttempts => {
+                "Maximum attempts: positive integer (Enter applies, Esc returns to review)"
+            }
+            Self::TaskDependencies => {
+                "Dependencies: comma-separated exact task IDs (Enter applies, Esc returns)"
+            }
+            Self::TaskCapabilities => {
+                "Required capabilities: comma-separated names (Enter applies, Esc returns)"
+            }
             Self::Capacity => {
                 "Concurrency capacity: positive integer (Enter proposes, Esc discards)"
             }
@@ -141,6 +158,30 @@ fn task_ids(value: &str) -> Result<Vec<String>, &'static str> {
     Ok(ids)
 }
 
+fn bounded_list(value: &str, max_entries: usize, max_bytes: usize) -> Result<Vec<String>, ()> {
+    if value.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let values = value
+        .split(',')
+        .map(str::trim)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if values.len() > max_entries
+        || values
+            .iter()
+            .any(|value| value.is_empty() || value.len() > max_bytes)
+        || values
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != values.len()
+    {
+        return Err(());
+    }
+    Ok(values)
+}
+
 impl Component {
     pub fn new<C: WireClientV1 + Send + 'static>(client: C, writes: bool) -> Self {
         Self::from_worker(Worker::spawn(client, writes), writes)
@@ -176,10 +217,16 @@ impl Component {
 
     pub fn update(&mut self, input: Input, focused: bool) -> Lifecycle {
         let (lifecycle, action) = self.state.update(input, focused, self.worker.is_busy());
-        if let Some(action) = action
-            && self.worker.try_dispatch(action).is_err()
-        {
-            self.state.notice = "Service action pending; input was not queued or replayed.".into();
+        if let Some(action) = action {
+            let recovery = match &action {
+                Action::SubmitGraph(tasks) => Some(tasks.clone()),
+                _ => None,
+            };
+            if self.worker.try_dispatch(action).is_err() {
+                self.state.task_batch = recovery;
+                self.state.notice =
+                    "Service action pending; reviewed task graph preserved for retry.".into();
+            }
         }
         lifecycle
     }
@@ -226,11 +273,12 @@ impl Component {
     }
 
     pub(crate) fn editing(&self) -> bool {
-        self.state.entry.is_some()
+        self.state.entry.is_some() || self.state.task_batch.is_some()
     }
 
     pub(crate) fn composing_task_batch(&self) -> bool {
-        self.state.entry.is_some() && matches!(self.state.entry_kind, EntryKind::Task)
+        self.state.task_batch.is_some()
+            || self.state.entry.is_some() && matches!(self.state.entry_kind, EntryKind::Task)
     }
 
     pub(crate) fn confirming_cancel_batch(&self) -> bool {
@@ -279,6 +327,10 @@ impl Component {
         crate::status_text(
             &self.state.view,
             self.state.entry.as_deref(),
+            self.state
+                .task_batch
+                .as_deref()
+                .map(|tasks| (tasks, self.state.task_batch_selected)),
             &self.state.notice,
             self.state.entry_kind.label(),
         )
@@ -290,6 +342,10 @@ impl Component {
             area,
             &self.state.view,
             self.state.entry.as_deref(),
+            self.state
+                .task_batch
+                .as_deref()
+                .map(|tasks| (tasks, self.state.task_batch_selected)),
             &self.state.notice,
             self.state.entry_kind.label(),
         );
@@ -301,25 +357,145 @@ impl State {
         if !focused {
             return (Lifecycle::Continue, None);
         }
-        if input == Input::Close || input == Input::Text('q') && self.entry.is_none() {
+        if input == Input::Close
+            || input == Input::Text('q') && self.entry.is_none() && self.task_batch.is_none()
+        {
             return (Lifecycle::CloseRequested, None);
         }
         let action = if let Some(id) = &mut self.entry {
             match input {
                 Input::Escape => {
                     self.entry = None;
+                    if !matches!(self.entry_kind, EntryKind::Task) {
+                        self.entry_kind = EntryKind::Task;
+                        self.notice = "Returned to the reviewed task graph; nothing sent.".into();
+                    }
                     None
                 }
                 Input::Enter if !busy => {
                     let value = self.entry.take().unwrap();
+                    let task_field = matches!(
+                        self.entry_kind,
+                        EntryKind::TaskPriority
+                            | EntryKind::TaskMaxAttempts
+                            | EntryKind::TaskDependencies
+                            | EntryKind::TaskCapabilities
+                    );
+                    if task_field {
+                        let applied = match self.entry_kind {
+                            EntryKind::TaskPriority => value
+                                .parse::<i32>()
+                                .ok()
+                                .and_then(|priority| {
+                                    self.task_batch.as_mut().and_then(|tasks| {
+                                        tasks.get_mut(self.task_batch_selected).map(|task| {
+                                            task.priority = priority;
+                                            self.notice =
+                                                format!("Priority set to {priority}; graph not sent.");
+                                        })
+                                    })
+                                })
+                                .is_some(),
+                            EntryKind::TaskMaxAttempts => value
+                                .parse::<u32>()
+                                .ok()
+                                .filter(|attempts| *attempts > 0)
+                                .and_then(|attempts| {
+                                    self.task_batch.as_mut().and_then(|tasks| {
+                                        tasks.get_mut(self.task_batch_selected).map(|task| {
+                                            task.max_attempts = attempts;
+                                            self.notice = format!(
+                                                "Maximum attempts set to {attempts}; graph not sent."
+                                            );
+                                        })
+                                    })
+                                })
+                                .is_some(),
+                            EntryKind::TaskDependencies => {
+                                let limits = chronos_local::wire_limits();
+                                bounded_list(
+                                    &value,
+                                    limits.max_dependencies_per_task,
+                                    limits.max_id_bytes,
+                                )
+                                .ok()
+                                .and_then(|dependencies| {
+                                    self.task_batch.as_mut().and_then(|tasks| {
+                                        tasks.get_mut(self.task_batch_selected).and_then(|task| {
+                                            (!dependencies.iter().any(|value| value == &task.id))
+                                                .then(|| {
+                                                    task.dependencies = dependencies;
+                                                    self.notice =
+                                                        "Dependencies updated; graph not sent."
+                                                            .into();
+                                                })
+                                        })
+                                    })
+                                })
+                                .is_some()
+                            }
+                            EntryKind::TaskCapabilities => {
+                                let limits = chronos_local::wire_limits();
+                                bounded_list(
+                                    &value,
+                                    limits.max_capabilities_per_task,
+                                    limits.max_capability_bytes,
+                                )
+                                .ok()
+                                .and_then(|capabilities| {
+                                    self.task_batch.as_mut().and_then(|tasks| {
+                                        tasks.get_mut(self.task_batch_selected).map(|task| {
+                                            task.capabilities = capabilities;
+                                            self.notice =
+                                                "Required capabilities updated; graph not sent."
+                                                    .into();
+                                        })
+                                    })
+                                })
+                                .is_some()
+                            }
+                            _ => unreachable!("task field was checked above"),
+                        };
+                        if applied {
+                            self.entry_kind = EntryKind::Task;
+                        } else {
+                            self.entry = Some(value);
+                            self.notice =
+                                "Invalid field value; reviewed graph preserved and nothing sent."
+                                    .into();
+                        }
+                        return (Lifecycle::Continue, None);
+                    }
                     let action = match self.entry_kind {
                         EntryKind::Task => match task_ids(&value) {
-                            Ok(ids) => Some(Action::SubmitBatch(ids)),
+                            Ok(ids) => {
+                                self.task_batch = Some(
+                                    ids.into_iter()
+                                        .map(|id| TaskSpec {
+                                            id,
+                                            priority: 0,
+                                            dependencies: Vec::new(),
+                                            capabilities: Vec::new(),
+                                            max_attempts: 3,
+                                            retry_safety: RetrySafety::FenceUnknown,
+                                        })
+                                        .collect(),
+                                );
+                                self.task_batch_selected = 0;
+                                self.notice = "Review exact owner fields; Enter submits, ↑/↓ selects, p priority, d dependencies, c capabilities, a attempts, r retry safety, Esc edits IDs.".into();
+                                None
+                            }
                             Err(notice) => {
                                 self.notice = notice.into();
                                 None
                             }
                         },
+                        EntryKind::TaskPriority
+                        | EntryKind::TaskMaxAttempts
+                        | EntryKind::TaskDependencies
+                        | EntryKind::TaskCapabilities => {
+                            unreachable!("task fields return before action dispatch")
+                        }
                         EntryKind::Capacity => {
                             value.parse::<usize>().ok().filter(|n| *n > 0).map(|n| {
                                 Action::PlanScheduling(SchedulingChange::SetConcurrencyLimit(n))
@@ -335,7 +511,7 @@ impl State {
                             })
                         }
                     };
-                    if action.is_none() {
+                    if action.is_none() && self.task_batch.is_none() {
                         self.entry = Some(value);
                         if self.notice.is_empty() {
                             self.notice = "Invalid value; nothing was sent.".into();
@@ -367,6 +543,84 @@ impl State {
                             <= 256 =>
                 {
                     id.push(ch);
+                    None
+                }
+                _ => None,
+            }
+        } else if self.task_batch.is_some() {
+            match input {
+                Input::Enter if !busy => {
+                    let tasks = self.task_batch.take().unwrap();
+                    self.notice = format!(
+                        "Submitting {} exact task(s) as one atomic graph.",
+                        tasks.len()
+                    );
+                    Some(Action::SubmitGraph(tasks))
+                }
+                Input::Escape => {
+                    let ids = self
+                        .task_batch
+                        .take()
+                        .unwrap()
+                        .into_iter()
+                        .map(|task| task.id)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    self.entry_kind = EntryKind::Task;
+                    self.entry = Some(ids);
+                    self.notice =
+                        "Returned to task IDs; structured changes discarded, nothing sent.".into();
+                    None
+                }
+                Input::Up => {
+                    self.task_batch_selected = self.task_batch_selected.saturating_sub(1);
+                    None
+                }
+                Input::Down => {
+                    self.task_batch_selected = (self.task_batch_selected + 1)
+                        .min(self.task_batch.as_ref().unwrap().len().saturating_sub(1));
+                    None
+                }
+                Input::Text('p' | 'a' | 'd' | 'c') => {
+                    let task = &self.task_batch.as_ref().unwrap()[self.task_batch_selected];
+                    let (kind, value, notice) = match input {
+                        Input::Text('p') => (
+                            EntryKind::TaskPriority,
+                            String::new(),
+                            format!("Current priority {}; type a replacement.", task.priority),
+                        ),
+                        Input::Text('a') => (
+                            EntryKind::TaskMaxAttempts,
+                            String::new(),
+                            format!(
+                                "Current maximum attempts {}; type a replacement.",
+                                task.max_attempts
+                            ),
+                        ),
+                        Input::Text('d') => (
+                            EntryKind::TaskDependencies,
+                            task.dependencies.join(", "),
+                            "Edit exact dependency IDs; empty clears them.".into(),
+                        ),
+                        Input::Text('c') => (
+                            EntryKind::TaskCapabilities,
+                            task.capabilities.join(", "),
+                            "Edit required capability names; empty clears them.".into(),
+                        ),
+                        _ => unreachable!(),
+                    };
+                    self.entry_kind = kind;
+                    self.entry = Some(value);
+                    self.notice = notice;
+                    None
+                }
+                Input::Text('r') => {
+                    let task = &mut self.task_batch.as_mut().unwrap()[self.task_batch_selected];
+                    task.retry_safety = match task.retry_safety {
+                        RetrySafety::FenceUnknown => RetrySafety::ConnectorIdempotent,
+                        RetrySafety::ConnectorIdempotent => RetrySafety::FenceUnknown,
+                    };
+                    self.notice = "Retry safety toggled; graph not sent.".into();
                     None
                 }
                 _ => None,
@@ -507,9 +761,56 @@ mod tests {
             }
         }
         pane.update(Input::Enter, true);
+        assert!(pane.composing_task_batch());
+        pane.update(Input::Down, true);
+        pane.update(Input::Text('p'), true);
+        pane.update(Input::Text('7'), true);
+        pane.update(Input::Enter, true);
+        pane.update(Input::Text('d'), true);
+        for ch in "embedded-one".chars() {
+            pane.update(Input::Text(ch), true);
+        }
+        pane.update(Input::Enter, true);
+        pane.update(Input::Text('c'), true);
+        for ch in "local-agent".chars() {
+            pane.update(Input::Text(ch), true);
+        }
+        pane.update(Input::Enter, true);
+        pane.update(Input::Text('a'), true);
+        pane.update(Input::Text('5'), true);
+        pane.update(Input::Enter, true);
+        pane.update(Input::Text('r'), true);
+        pane.update(Input::Enter, true);
         deliver(&mut pane);
         assert_eq!(pane.state.view.rows.len(), 3);
-        assert!(pane.state.view.rows.iter().all(|row| row.phase == "ready"));
+        assert_eq!(
+            pane.state
+                .view
+                .rows
+                .iter()
+                .filter(|row| row.phase == "ready")
+                .count(),
+            2
+        );
+        assert_eq!(
+            pane.state
+                .view
+                .rows
+                .iter()
+                .filter(|row| row.phase == "blocked")
+                .count(),
+            1
+        );
+        let configured = pane
+            .state
+            .view
+            .rows
+            .iter()
+            .find(|row| row.reference.task == "embedded-two")
+            .unwrap();
+        assert_eq!(configured.priority, 7);
+        assert_eq!(configured.dependency_count, 1);
+        assert_eq!(configured.required_capability_count, 1);
         for index in 0..3 {
             if index > 0 {
                 pane.update(Input::Down, true);
@@ -535,7 +836,7 @@ mod tests {
                 .all(|row| row.phase == "cancelled")
         );
         assert_eq!(pane.state.view.cancel_receipts.len(), 3);
-        assert_eq!(pane.state.view.signals.requests, 9);
+        assert_eq!(pane.state.view.signals.requests, 8);
         assert_eq!(pane.state.view.signals.backend_errors, 0);
         assert_eq!(pane.update(Input::Close, true), Lifecycle::CloseRequested);
     }
@@ -573,11 +874,14 @@ mod tests {
         assert_eq!(state.entry.as_ref().unwrap().len(), 256);
         assert!(state.update(Input::Enter, true, true).1.is_none());
         assert!(state.entry.is_some());
+        assert!(state.update(Input::Enter, true, false).1.is_none());
+        assert!(state.entry.is_none());
+        assert_eq!(state.task_batch.as_ref().unwrap().len(), 1);
         assert!(matches!(
             state.update(Input::Enter, true, false).1,
-            Some(Action::SubmitBatch(ids)) if ids.len() == 1 && ids[0].len() == 256
+            Some(Action::SubmitGraph(tasks)) if tasks.len() == 1 && tasks[0].id.len() == 256
         ));
-        assert!(state.entry.is_none());
+        assert!(state.task_batch.is_none());
     }
 
     #[test]
