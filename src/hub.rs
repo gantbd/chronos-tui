@@ -25,6 +25,29 @@ pub struct Workstream {
     pub directory: PathBuf,
 }
 
+/// Bounded owner-published task fact used by composition hosts to build a
+/// read-only operator agenda. This is not an approval, assignment, claim, or
+/// scheduling decision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperatorAgendaTask {
+    pub task: String,
+    pub incarnation: String,
+    pub phase: &'static str,
+    pub priority: i32,
+}
+
+/// One Chronos workstream contribution to a host-owned operator-agenda
+/// projection. `current == false` means the host must not present cached rows
+/// as actionable current facts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperatorAgendaObservation {
+    pub workstream: String,
+    pub revision: String,
+    pub current: bool,
+    pub truncated: bool,
+    pub tasks: Vec<OperatorAgendaTask>,
+}
+
 /// Host-invoked presentation intents. These enter the same bounded forms and
 /// exact-confirmation paths as keyboard input; they do not bypass Chronos
 /// authority or dispatch a mutation directly.
@@ -318,6 +341,37 @@ impl Hub {
         self.streams
             .iter()
             .any(|stream| stream.component.mutation_recovery_required())
+    }
+
+    /// Projects uncertain tasks from each bounded current owner page. A
+    /// composition host may route the operator back to Chronos, but must not
+    /// infer authority or mutate from this observation.
+    pub fn operator_agenda_observations(&self) -> Vec<OperatorAgendaObservation> {
+        self.streams
+            .iter()
+            .enumerate()
+            .map(|(index, stream)| {
+                let current = self.stream_view(index);
+                let view = stream.component.view();
+                OperatorAgendaObservation {
+                    workstream: stream.name.clone(),
+                    revision: view.revision.clone(),
+                    current: current.is_some(),
+                    truncated: view.has_next,
+                    tasks: current
+                        .into_iter()
+                        .flat_map(|view| view.rows.iter())
+                        .filter(|row| row.phase == "uncertain")
+                        .map(|row| OperatorAgendaTask {
+                            task: row.reference.task.clone(),
+                            incarnation: row.reference.incarnation.clone(),
+                            phase: row.phase,
+                            priority: row.priority,
+                        })
+                        .collect(),
+                }
+            })
+            .collect()
     }
 
     /// Enters one peer-owned interactive workflow from a composition host.
@@ -746,8 +800,8 @@ impl Hub {
         component.update(input, true)
     }
 
-    fn current_view(&self) -> Option<&View> {
-        let stream = &self.streams[self.active];
+    fn stream_view(&self, index: usize) -> Option<&View> {
+        let stream = self.streams.get(index)?;
         let view = stream.component.view();
         if view.mutation_blocked && view.revision != "exhausted"
             || stream.watch.as_ref().is_some_and(|watch| {
@@ -762,6 +816,10 @@ impl Hub {
             return None;
         }
         Some(view)
+    }
+
+    fn current_view(&self) -> Option<&View> {
+        self.stream_view(self.active)
     }
 
     fn explanation_selection(&self) -> Option<Selection> {
@@ -1690,6 +1748,11 @@ mod workbench_tests {
     fn workbench_intents_enter_the_existing_bounded_and_confirmed_flows() {
         let mut hub = hub(true, true);
         poll_until(&mut hub, |hub| hub.has_current_tasks());
+        let agenda = hub.operator_agenda_observations();
+        assert_eq!(agenda.len(), 1);
+        assert_eq!(agenda[0].workstream, "Embedded");
+        assert!(agenda[0].current);
+        assert!(agenda[0].tasks.is_empty());
         assert_eq!(
             hub.invoke_workbench(WorkbenchIntent::NewTask),
             Ok("Opened the bounded Chronos new-task form")
