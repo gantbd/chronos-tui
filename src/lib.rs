@@ -20,7 +20,7 @@ pub use component::{
     Component, Input, Lifecycle, SchedulingMutationDisposition, TaskMutationDisposition,
     translate_key,
 };
-pub use hub::{Hub, WorkbenchIntent, Workstream, validate_workstreams};
+pub use hub::{Hub, SelectedTaskProjection, WorkbenchIntent, Workstream, validate_workstreams};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},

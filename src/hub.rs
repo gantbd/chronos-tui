@@ -48,6 +48,18 @@ pub struct OperatorAgendaObservation {
     pub tasks: Vec<OperatorAgendaTask>,
 }
 
+/// Exact currently selected owner projection for cross-peer relationship
+/// composition. Absence means there is no current stable selection; the host
+/// must not invent a task, incarnation, revision, or attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectedTaskProjection {
+    pub workstream: String,
+    pub revision: String,
+    pub task: String,
+    pub incarnation: String,
+    pub attempt: Option<u32>,
+}
+
 /// Host-invoked presentation intents. These enter the same bounded forms and
 /// exact-confirmation paths as keyboard input; they do not bypass Chronos
 /// authority or dispatch a mutation directly.
@@ -896,6 +908,22 @@ impl Hub {
     pub fn has_current_tasks(&self) -> bool {
         self.current_view()
             .is_some_and(|view| view.revision != "unknown")
+    }
+
+    pub fn selected_task(&self) -> Option<SelectedTaskProjection> {
+        let stream = self.streams.get(self.active)?;
+        let view = self.current_view()?;
+        if view.revision == "unknown" {
+            return None;
+        }
+        let row = view.rows.get(view.selected)?;
+        Some(SelectedTaskProjection {
+            workstream: stream.name.clone(),
+            revision: view.revision.clone(),
+            task: row.reference.task.clone(),
+            incarnation: row.reference.incarnation.clone(),
+            attempt: row.attempt,
+        })
     }
 
     pub fn draw(&self, frame: &mut Frame<'_>) {
@@ -1767,6 +1795,16 @@ mod workbench_tests {
         poll_until(&mut hub, |hub| {
             !hub.streams[0].component.view().rows.is_empty()
         });
+        assert_eq!(
+            hub.selected_task(),
+            Some(SelectedTaskProjection {
+                workstream: "Embedded".into(),
+                revision: "1".into(),
+                task: "palette-task".into(),
+                incarnation: "0".into(),
+                attempt: None,
+            })
+        );
         assert_eq!(
             hub.invoke_workbench(WorkbenchIntent::CancelSelectedTask),
             Ok("Opened Chronos's exact marked/current cancellation confirmation")
