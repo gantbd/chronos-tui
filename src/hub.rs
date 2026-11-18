@@ -456,6 +456,7 @@ impl Hub {
                 {
                     return Err("Chronos already has an interactive action in flight");
                 }
+                self.dismiss_presentation_overlays();
                 self.surface = Surface::Board;
                 self.update(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
                 Ok("Opened the bounded Chronos new-task form")
@@ -477,11 +478,21 @@ impl Hub {
                 {
                     return Err("Chronos already has an interactive action in flight");
                 }
+                self.dismiss_presentation_overlays();
                 self.surface = Surface::Board;
                 self.update(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
                 Ok("Opened Chronos's exact marked/current cancellation confirmation")
             }
         }
+    }
+
+    fn dismiss_presentation_overlays(&mut self) {
+        self.presence_open = false;
+        self.presence_scroll = 0;
+        self.graph_visible = false;
+        self.search = None;
+        self.agenda_visible = false;
+        self.handoff.pending = None;
     }
 
     fn start_handoff(&mut self, action: HandoffAction, target: Selection) {
@@ -1781,10 +1792,18 @@ mod workbench_tests {
         assert_eq!(agenda[0].workstream, "Embedded");
         assert!(agenda[0].current);
         assert!(agenda[0].tasks.is_empty());
+        hub.presence_open = true;
+        hub.presence_scroll = 4;
+        hub.graph_visible = true;
+        hub.agenda_visible = true;
         assert_eq!(
             hub.invoke_workbench(WorkbenchIntent::NewTask),
             Ok("Opened the bounded Chronos new-task form")
         );
+        assert!(!hub.presence_open);
+        assert_eq!(hub.presence_scroll, 0);
+        assert!(!hub.graph_visible);
+        assert!(!hub.agenda_visible);
         assert!(hub.streams[0].component.editing());
         for character in "palette-task".chars() {
             hub.update(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
