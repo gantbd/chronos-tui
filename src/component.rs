@@ -299,12 +299,16 @@ impl Component {
     }
 
     pub(crate) fn task_mutation_disposition(&self) -> TaskMutationDisposition {
-        if self.state.view.status.starts_with("Applied.") {
-            TaskMutationDisposition::Applied
-        } else if self.state.view.status.contains("outcome unknown") {
-            TaskMutationDisposition::OutcomeUnknown
-        } else {
-            TaskMutationDisposition::Refused
+        match self.state.view.last_task_mutation {
+            Some(chronos_model::TaskMutationDisposition::Applied) => {
+                TaskMutationDisposition::Applied
+            }
+            Some(chronos_model::TaskMutationDisposition::OutcomeUnknown) => {
+                TaskMutationDisposition::OutcomeUnknown
+            }
+            Some(chronos_model::TaskMutationDisposition::Refused) | None => {
+                TaskMutationDisposition::Refused
+            }
         }
     }
 
