@@ -147,6 +147,10 @@ impl Alignment {
     pub const fn notice(&self) -> &'static str {
         self.notice
     }
+
+    pub(crate) fn observation(&self) -> Option<&Observation> {
+        self.observation.as_deref()
+    }
 }
 
 const fn refusal_notice(code: RefusalCode) -> &'static str {

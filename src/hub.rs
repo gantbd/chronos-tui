@@ -50,6 +50,15 @@ pub struct OperatorAgendaObservation {
     pub tasks: Vec<OperatorAgendaTask>,
 }
 
+/// One configured product-alignment contribution to a host-owned attention
+/// projection. Absence of an observation is an unavailable source, never
+/// permission to reuse an older PM proposal.
+#[derive(Clone)]
+pub struct AlignmentOperatorAgendaObservation {
+    pub workstream: String,
+    pub observation: Option<chronos_protocol::alignment_v1::Observation>,
+}
+
 /// Exact currently selected owner projection for cross-peer relationship
 /// composition. Absence means there is no current stable selection; the host
 /// must not invent a task, incarnation, revision, or attempt.
@@ -415,6 +424,23 @@ impl Hub {
                         })
                         .collect(),
                 }
+            })
+            .collect()
+    }
+
+    pub fn alignment_operator_agenda_observations(
+        &self,
+    ) -> Vec<AlignmentOperatorAgendaObservation> {
+        self.streams
+            .iter()
+            .filter_map(|stream| {
+                stream
+                    .alignment
+                    .as_ref()
+                    .map(|alignment| AlignmentOperatorAgendaObservation {
+                        workstream: stream.name.clone(),
+                        observation: alignment.observation().cloned(),
+                    })
             })
             .collect()
     }
