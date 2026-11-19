@@ -42,8 +42,8 @@ pub struct CapabilityManifest {
 pub const CAPABILITIES: CapabilityManifest = CapabilityManifest {
     schema: 1,
     peer: "chronos",
-    interactive: &["tasks.observe.v1", "product-alignment.observe.v1"],
-    headless: &["tasks.observe.v1", "product-alignment.observe.v1"],
+    interactive: &["tasks.workflow.observe.v9", "product-alignment.observe.v1"],
+    headless: &["tasks.workflow.observe.v9", "product-alignment.observe.v1"],
 };
 
 fn task_badges(view: &View, row: &chronos_model::Row) -> String {
@@ -181,7 +181,7 @@ pub(crate) fn draw_form_in(
                 ListItem::new(format!(
                     "{} {:<12} p={:<4} {}",
                     task_badges(view, row),
-                    row.phase,
+                    row.status_label(),
                     row.priority,
                     display_id(&row.reference.task)
                 ))

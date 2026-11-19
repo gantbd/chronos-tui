@@ -54,5 +54,5 @@ fn presentation_is_unpublished_engine_free_and_has_no_peer_ui_dependency() {
     let headless = include_str!("live/headless.sh");
     assert!(headless.contains("--package chronos-tui-cli"));
     assert!(headless.contains("headless --profile"));
-    assert!(headless.contains("tasks.observe.v1"));
+    assert!(headless.contains("tasks.workflow.observe.v9"));
 }

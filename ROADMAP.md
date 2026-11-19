@@ -7,7 +7,8 @@ The standalone binary now lives in the separate `chronos-tui-cli` workspace
 package. The library package has no `src/main.rs`; existing interactive hub,
 classic, profile, and legacy snapshot behavior is retained. The explicit
 `headless` command now observes one or more workstreams through the bounded
-public observer, emits a versioned `tasks.observe.v1` JSON report, preserves
+V9 workflow observer, emits a versioned `tasks.workflow.observe.v9` JSON report
+with authoritative status and separate execution diagnostics, preserves
 healthy rows on partial failure, and constructs no TUI state. The real-service
 tmux hub and feed journeys pass through the extracted binary.
 The peer now publishes a closed interactive/headless presentation capability

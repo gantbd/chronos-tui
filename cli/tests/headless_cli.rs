@@ -14,11 +14,11 @@ fn capabilities_are_peer_owned_and_connection_free() {
     assert_eq!(manifest["peer"], "chronos");
     assert_eq!(
         manifest["interactive"],
-        serde_json::json!(["tasks.observe.v1"])
+        serde_json::json!(["tasks.workflow.observe.v9", "product-alignment.observe.v1"])
     );
     assert_eq!(
         manifest["headless"],
-        serde_json::json!(["tasks.observe.v1"])
+        serde_json::json!(["tasks.workflow.observe.v9", "product-alignment.observe.v1"])
     );
 }
 
@@ -41,7 +41,7 @@ fn headless_reports_every_workstream_and_refuses_partial_success() {
     assert_eq!(report["version"], 1);
     assert_eq!(report["mode"], "headless");
     assert_eq!(report["peer"], "chronos");
-    assert_eq!(report["capability"], "tasks.observe.v1");
+    assert_eq!(report["capability"], "tasks.workflow.observe.v9");
     assert_eq!(report["complete"], false);
     assert_eq!(report["workstreams"][0]["name"], "Primary");
     assert_eq!(report["workstreams"][0]["status"], "not_sent");
@@ -61,7 +61,7 @@ fn headless_configuration_failure_is_versioned_json() {
     assert_eq!(report["mode"], "headless");
     assert_eq!(report["complete"], false);
     assert_eq!(report["peer"], "chronos");
-    assert_eq!(report["capability"], "tasks.observe.v1");
+    assert_eq!(report["capability"], "tasks.workflow.observe.v9");
     assert_eq!(report["status"], "configuration_refused");
     assert_eq!(report["workstreams"], serde_json::json!([]));
 }

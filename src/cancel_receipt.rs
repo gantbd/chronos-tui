@@ -1,5 +1,5 @@
 //! Route guarded cancellation through the local service's V3 receipt contract.
-use chronos_client::{SchedulingWireClientV5, WireClientV1, WireClientV3};
+use chronos_client::{SchedulingWireClientV5, WireClientV1, WireClientV3, WorkflowWireClientV9};
 use chronos_local::{CallError, LocalClient};
 use chronos_protocol::{
     Command, Failure, FailureCode, Outcome, Request, Response, coordination_v3 as v3,
@@ -28,6 +28,17 @@ impl SchedulingWireClientV5 for ReceiptClient {
 
     fn request_scheduling_v5(&mut self, request: v5::Request) -> Result<v5::Response, CallError> {
         self.0.request_scheduling_v5(request)
+    }
+}
+
+impl WorkflowWireClientV9 for ReceiptClient {
+    type Error = CallError;
+
+    fn request_workflow_v9(
+        &mut self,
+        request: chronos_protocol::workflow_v9::Request,
+    ) -> Result<chronos_protocol::workflow_v9::Response, CallError> {
+        self.0.request_workflow_v9(request)
     }
 }
 

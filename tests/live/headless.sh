@@ -47,11 +47,11 @@ import json, sys
 report = json.load(sys.stdin)
 assert report["version"] == 1 and report["mode"] == "headless"
 assert report["peer"] == "chronos"
-assert report["complete"] and report["capability"] == "tasks.observe.v1"
+assert report["complete"] and report["capability"] == "tasks.workflow.observe.v9"
 assert len(report["workstreams"]) == 1
 row = report["workstreams"][0]
 assert row["name"] == "Primary" and row["status"] == "current"
-assert row["tasks"] == 0 and not row["truncated"] and row["revision"]
+assert row["task_count"] == 0 and row["tasks"] == [] and not row["truncated"] and row["revision"]
 '
 
 profile="$scratch/profile.json"

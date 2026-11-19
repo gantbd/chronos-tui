@@ -81,8 +81,10 @@ It is refreshable with **r** and has no apply, acceptance, claim,
 reprioritization, or sign-off authority. Use `--classic` for the original
 single-service presentation.
 
-Board lanes group observed phases. Left and Right move to the next populated
-lane. Dependencies shows observed prerequisite counts and readiness. Press
+Board lanes group the six authoritative statuses: Backlog, Open, Blocked,
+In Progress, Ready for Review, and Done. Left and Right move to the next
+populated lane. Execution phase remains separate diagnostic evidence.
+Dependencies shows observed prerequisite counts and readiness. Press
 **x** on a selected task to request the authorized V2 explanation, including
 remaining prerequisites and downstream reference count. The inspector displays
 it only for the matching task incarnation and revision. Schedule shows the
@@ -113,7 +115,7 @@ in hand-edited profiles resolve from the profile’s directory.
 
 Press **w** and type part of a workstream name to switch directly to its board.
 Press **/** for the cross-workstream task queue. Search task IDs case-insensitively
-and optionally add `phase:ready` or `in:atlas`. Each result names the originating
+and optionally add `status:open`, `execution:ready`, or `in:atlas`. Each result names the originating
 workstream, even when task IDs match. Up and Down select, Enter opens the source
 board and Escape closes the search. The search uses observed pages and reports
 workstreams with additional pages or unverified data. Refresh and paginate in
@@ -193,7 +195,7 @@ and dates are independent of Chronos task identity and claim eligibility.
 
 Add `--scheduling` to opt into the V5 client against an explicitly selected
 atomic local service. Embeddings use `Component::new_with_scheduling(client,
-writes)`; existing V1-only constructors are unchanged. The same option works
+writes)` and provide the V1 mutation plus V9 workflow observation ports. The same option works
 with `--snapshot` without entering terminal mode. Reads need no write flag.
 
 For a bounded machine-readable observation across one or more workstreams, use
@@ -205,10 +207,12 @@ cargo run -p chronos-tui-cli --bin chronos-tui --locked --offline -- \
   --workstream Secondary /path/to/secondary
 ```
 
-It emits a versioned JSON report for the `tasks.observe.v1` capability, retains
-each healthy workstream when another is unavailable, and exits unsuccessfully
-unless every observation is current. `--snapshot` remains the legacy
-single-workstream human-readable form.
+It emits a versioned JSON report for the `tasks.workflow.observe.v9`
+capability. Every bounded task entry includes its authoritative status and
+separate execution phase; blocker evidence is present only for Blocked work.
+The report retains each healthy workstream when another is unavailable and
+exits unsuccessfully unless every observation is current. `--snapshot`
+remains the legacy single-workstream human-readable form.
 
 Run `sh tests/live/headless.sh` to qualify the explicit headless command against
 a real Chronos service, including a healthy workstream retained beside an

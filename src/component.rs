@@ -183,11 +183,18 @@ fn bounded_list(value: &str, max_entries: usize, max_bytes: usize) -> Result<Vec
 }
 
 impl Component {
-    pub fn new<C: WireClientV1 + Send + 'static>(client: C, writes: bool) -> Self {
+    pub fn new<C: WireClientV1 + chronos_client::WorkflowWireClientV9 + Send + 'static>(
+        client: C,
+        writes: bool,
+    ) -> Self {
         Self::from_worker(Worker::spawn(client, writes), writes)
     }
     pub fn new_with_scheduling<
-        C: WireClientV1 + chronos_client::SchedulingWireClientV5 + Send + 'static,
+        C: WireClientV1
+            + chronos_client::WorkflowWireClientV9
+            + chronos_client::SchedulingWireClientV5
+            + Send
+            + 'static,
     >(
         client: C,
         writes: bool,
@@ -792,7 +799,7 @@ mod tests {
                 .view
                 .rows
                 .iter()
-                .filter(|row| row.phase == "ready")
+                .filter(|row| row.status == chronos_protocol::workflow_v9::Status::Open)
                 .count(),
             2
         );
@@ -801,7 +808,7 @@ mod tests {
                 .view
                 .rows
                 .iter()
-                .filter(|row| row.phase == "blocked")
+                .filter(|row| row.status == chronos_protocol::workflow_v9::Status::Blocked)
                 .count(),
             1
         );
@@ -837,7 +844,7 @@ mod tests {
                 .view
                 .rows
                 .iter()
-                .all(|row| row.phase == "cancelled")
+                .all(|row| row.status == chronos_protocol::workflow_v9::Status::Backlog)
         );
         assert_eq!(pane.state.view.cancel_receipts.len(), 3);
         assert_eq!(pane.state.view.signals.requests, 8);

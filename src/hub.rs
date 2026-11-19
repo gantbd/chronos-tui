@@ -11,6 +11,7 @@ use crate::watch::Watch;
 use crate::{Component, Input, Lifecycle, format_not_before, translate_key};
 use chronos_model::{Row, View, display_id};
 use chronos_protocol::dependencies_v6::Direction;
+use chronos_protocol::workflow_v9::{ExecutionPhase, Status};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::{
     Frame,
@@ -34,7 +35,8 @@ pub struct Workstream {
 pub struct OperatorAgendaTask {
     pub task: String,
     pub incarnation: String,
-    pub phase: &'static str,
+    pub status: &'static str,
+    pub execution_phase: &'static str,
     pub priority: i32,
     pub dependency_count: usize,
 }
@@ -426,11 +428,15 @@ impl Hub {
                     tasks: current
                         .into_iter()
                         .flat_map(|view| view.rows.iter())
-                        .filter(|row| row.phase == "blocked" || row.phase == "uncertain")
+                        .filter(|row| {
+                            row.status == Status::Blocked
+                                || row.execution_phase == ExecutionPhase::Uncertain
+                        })
                         .map(|row| OperatorAgendaTask {
                             task: row.reference.task.clone(),
                             incarnation: row.reference.incarnation.clone(),
-                            phase: row.phase,
+                            status: row.status_label(),
+                            execution_phase: row.execution_phase_label(),
                             priority: row.priority,
                             dependency_count: row.dependency_count,
                         })
@@ -1410,7 +1416,7 @@ impl Hub {
                 format!(
                     "{} · {} · {}{status}",
                     display_id(&row.reference.task),
-                    row.phase,
+                    row.status_label(),
                     stream.name
                 )
             } else {
@@ -1471,7 +1477,7 @@ impl Hub {
     fn overview(&self, frame: &mut Frame<'_>, area: Rect) {
         let rows = self.streams.iter().map(|stream| {
             let view = stream.component.view();
-            let mut counts = [0; 4];
+            let mut counts = [0; 6];
             for row in &view.rows {
                 counts[lane(row)] += 1;
             }
@@ -1487,11 +1493,11 @@ impl Hub {
             } else {
                 ""
             };
-            let [blocked, ready, active, closed] = counts;
+            let [backlog, open, blocked, in_progress, review, done] = counts;
             ListItem::new(vec![
                 Line::from(format!("{}{condition}{feed}", stream.name)),
                 Line::from(format!(
-                    "Blocked {blocked}  Ready {ready}  Active {active}  Closed {closed}{}",
+                    "Backlog {backlog}  Open {open}  Blocked {blocked}  In progress {in_progress}\nReady for review {review}  Done {done}{}",
                     if view.has_next { "  + pages" } else { "" },
                 ))
                 .style(DIM),
@@ -1596,10 +1602,10 @@ impl Hub {
             return;
         }
         let note = match self.surface {
-            Surface::Dependencies => "Prerequisites   Phase        Task · g opens visible edges",
+            Surface::Dependencies => "Prerequisites   Status       Task · g opens visible edges",
             Surface::Execution => "Chronos task attempts · l roster",
             _ if view.rows.is_empty() => "No tasks on this page",
-            _ => "Phase          Task",
+            _ => "Status         Task",
         };
         let narrow_detail =
             matches!(self.surface, Surface::Dependencies | Surface::Execution) && area.width < 60;
@@ -1623,11 +1629,14 @@ impl Hub {
         }
         let items = view.rows.iter().map(|row| {
             let detail = match self.surface {
-                Surface::Dependencies => format!("{:<15} {}", row.dependency_count, row.phase),
-                Surface::Execution => row
-                    .attempt
-                    .map_or("—".into(), |number| format!("#{number}")),
-                _ => row.phase.into(),
+                Surface::Dependencies => {
+                    format!("{:<15} {}", row.dependency_count, row.status_label())
+                }
+                Surface::Execution => row.attempt.map_or_else(
+                    || row.execution_phase_label().into(),
+                    |number| format!("{} #{number}", row.execution_phase_label()),
+                ),
+                _ => row.status_label().into(),
             };
             ListItem::new(format!("{detail:<13} {}", display_id(&row.reference.task)))
         });
@@ -1666,8 +1675,10 @@ impl Search {
             for (task, row) in stream.component.view().rows.iter().enumerate() {
                 let id = row.reference.task.to_lowercase();
                 if terms.iter().all(|term| {
-                    if let Some(phase) = term.strip_prefix("phase:") {
-                        row.phase == phase
+                    if let Some(status) = term.strip_prefix("status:") {
+                        status_key(row) == status
+                    } else if let Some(execution) = term.strip_prefix("execution:") {
+                        execution_phase_key(row) == execution
                     } else if let Some(scope) = term.strip_prefix("in:") {
                         name.contains(scope)
                     } else {
@@ -1704,11 +1715,36 @@ fn panel(title: &str, focused: bool) -> Block<'_> {
 }
 
 fn lane(row: &Row) -> usize {
-    match row.phase {
-        "blocked" => 0,
-        "ready" => 1,
-        "running" | "uncertain" => 2,
-        _ => 3,
+    match row.status {
+        Status::Backlog => 0,
+        Status::Open => 1,
+        Status::Blocked => 2,
+        Status::InProgress => 3,
+        Status::ReadyForReview => 4,
+        Status::Done => 5,
+    }
+}
+
+fn status_key(row: &Row) -> &'static str {
+    match row.status {
+        Status::Backlog => "backlog",
+        Status::Open => "open",
+        Status::Blocked => "blocked",
+        Status::InProgress => "in_progress",
+        Status::ReadyForReview => "ready_for_review",
+        Status::Done => "done",
+    }
+}
+
+fn execution_phase_key(row: &Row) -> &'static str {
+    match row.execution_phase {
+        ExecutionPhase::DependencyWait => "dependency_wait",
+        ExecutionPhase::Ready => "ready",
+        ExecutionPhase::Running => "running",
+        ExecutionPhase::Uncertain => "uncertain",
+        ExecutionPhase::Succeeded => "succeeded",
+        ExecutionPhase::Failed => "failed",
+        ExecutionPhase::Cancelled => "cancelled",
     }
 }
 
@@ -1735,10 +1771,17 @@ fn board(frame: &mut Frame<'_>, area: Rect, view: &View, focused: bool) {
     let block = panel("Board", focused);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let areas = Layout::horizontal([Constraint::Ratio(1, 4); 4]).areas::<4>(inner);
-    for (index, title) in ["Blocked", "Ready", "Active", "Closed"]
-        .into_iter()
-        .enumerate()
+    let areas = Layout::horizontal([Constraint::Ratio(1, 6); 6]).areas::<6>(inner);
+    for (index, title) in [
+        "Backlog",
+        "Open",
+        "Blocked",
+        "In Progress",
+        "Ready for Review",
+        "Done",
+    ]
+    .into_iter()
+    .enumerate()
     {
         let mut selected = None;
         let mut items = Vec::new();
@@ -1751,13 +1794,8 @@ fn board(frame: &mut Frame<'_>, area: Rect, view: &View, focused: bool) {
             if row_index == view.selected {
                 selected = Some(items.len());
             }
-            let detail = if index >= 2 {
-                format!("{} ", row.phase)
-            } else {
-                String::new()
-            };
             items.push(ListItem::new(format!(
-                "{} {detail}{}",
+                "{} {}",
                 crate::task_badges(view, row),
                 display_id(&row.reference.task)
             )));
@@ -1779,15 +1817,25 @@ fn inspector(frame: &mut Frame<'_>, area: Rect, view: &View, explanation: &str) 
     let block = panel("Inspector", false);
     let mut details = if let Some(row) = view.rows.get(view.selected) {
         format!(
-            "{}\n\nPhase        {}\nPriority     {}\nIncarnation  {}\nAttempt      {}\nPrerequisites {}\nCapabilities  {}\n\n{}{}",
+            "{}\n\nStatus       {}\nExecution    {}\nPriority     {}\nIncarnation  {}\nAttempt      {}\nPrerequisites {}\nCapabilities  {}\nBlocker      {}\n\n{}{}",
             display_id(&row.reference.task),
-            row.phase,
+            row.status_label(),
+            row.execution_phase_label(),
             row.priority,
             row.reference.incarnation,
             row.attempt
                 .map_or("—".into(), |attempt| attempt.to_string()),
             row.dependency_count,
             row.required_capability_count,
+            row.blocker
+                .as_ref()
+                .map_or("—", |blocker| match blocker.kind {
+                    chronos_protocol::workflow_v9::BlockerKind::Dependency => "dependency",
+                    chronos_protocol::workflow_v9::BlockerKind::Decision => "decision",
+                    chronos_protocol::workflow_v9::BlockerKind::External => "external",
+                    chronos_protocol::workflow_v9::BlockerKind::Policy => "policy",
+                    chronos_protocol::workflow_v9::BlockerKind::Resource => "resource",
+                }),
             if view.mutation_blocked {
                 "Refresh to verify this view.\n"
             } else {
@@ -1915,7 +1963,7 @@ mod workbench_tests {
         assert_eq!(agenda.len(), 1);
         assert_eq!(agenda[0].tasks.len(), 1);
         assert_eq!(agenda[0].tasks[0].task, "blocked");
-        assert_eq!(agenda[0].tasks[0].phase, "blocked");
+        assert_eq!(agenda[0].tasks[0].status, "blocked");
         assert_eq!(agenda[0].tasks[0].priority, 10);
         assert_eq!(agenda[0].tasks[0].dependency_count, 1);
     }

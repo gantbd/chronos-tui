@@ -234,7 +234,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for row in &model.view.rows {
             println!(
                 "{} {}",
-                row.phase,
+                row.status_label(),
                 chronos_model::display_id(&row.reference.task)
             );
         }
@@ -370,7 +370,7 @@ fn chronos_headless_failure(status: &str, message: &str) -> Result<(), Box<dyn s
 
 #[cfg(unix)]
 fn observe_workstream(workstream: chronos_tui::Workstream) -> (serde_json::Value, bool) {
-    use chronos_client::observer::{Observer, ObserverLimits, RefreshError};
+    use chronos_client::workflow::{Observer, ObserverLimits, RefreshError};
 
     let mut observer = Observer::new(ObserverLimits {
         page_size: 32,
@@ -385,12 +385,30 @@ fn observe_workstream(workstream: chronos_tui::Workstream) -> (serde_json::Value
             let view = observer
                 .view()
                 .expect("successful refresh publishes a view");
+            let tasks = view
+                .entries
+                .iter()
+                .map(|entry| {
+                    serde_json::json!({
+                        "task": entry.reference.task,
+                        "incarnation": entry.reference.incarnation,
+                        "status": entry.snapshot.status,
+                        "execution_phase": entry.snapshot.execution_phase,
+                        "attempt_number": entry.snapshot.attempt_number,
+                        "priority": entry.snapshot.priority,
+                        "dependency_count": entry.snapshot.dependency_count,
+                        "required_capability_count": entry.snapshot.required_capability_count,
+                        "blocker": entry.snapshot.blocker,
+                    })
+                })
+                .collect::<Vec<_>>();
             (
                 serde_json::json!({
                     "name": workstream.name,
                     "status": "current",
                     "revision": format!("{:?}", view.revision),
-                    "tasks": view.entries.len(),
+                    "task_count": view.entries.len(),
+                    "tasks": tasks,
                     "truncated": false,
                 }),
                 true,

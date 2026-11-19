@@ -50,7 +50,9 @@ fn bounded_terminal_view_renders_selection_state_and_escaped_ids() {
     let view = View {
         rows: vec![Row {
             reference: reference.clone(),
-            phase: "ready",
+            status: chronos_protocol::workflow_v9::Status::Open,
+            blocker: None,
+            execution_phase: chronos_protocol::workflow_v9::ExecutionPhase::Ready,
             priority: 0,
             attempt: None,
             dependency_count: 0,
@@ -77,7 +79,7 @@ fn bounded_terminal_view_renders_selection_state_and_escaped_ids() {
         .map(|cell| cell.symbol())
         .collect();
     assert!(output.contains("Chronos"));
-    assert!(output.contains("ready"));
+    assert!(output.contains("open"));
     assert!(output.contains("task"));
     assert!(output.contains("[x][cA]"));
     assert!(!output.contains('\u{1b}'));
