@@ -21,6 +21,7 @@ use ratatui::{
 };
 use std::path::PathBuf;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Workstream {
     pub name: String,
     pub directory: PathBuf,
@@ -270,6 +271,17 @@ impl Hub {
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.plan = Some(Plan::load(path)?);
         Ok(())
+    }
+
+    /// Exact active owner target for composition hosts that must perform a
+    /// fresh owner read before a cross-peer operation. The directory is a
+    /// transport locator, not task evidence or authority.
+    pub fn active_workstream(&self) -> Workstream {
+        let stream = &self.streams[self.active];
+        Workstream {
+            name: stream.name.clone(),
+            directory: stream.directory.clone(),
+        }
     }
 
     pub fn bind_moira(
@@ -1924,6 +1936,13 @@ mod workbench_tests {
     fn workbench_intents_enter_the_existing_bounded_and_confirmed_flows() {
         let mut hub = hub(true, true);
         poll_until(&mut hub, |hub| hub.has_current_tasks());
+        assert_eq!(
+            hub.active_workstream(),
+            Workstream {
+                name: "Embedded".into(),
+                directory: "embedded".into(),
+            }
+        );
         let agenda = hub.operator_agenda_observations();
         assert_eq!(agenda.len(), 1);
         assert_eq!(agenda[0].workstream, "Embedded");
