@@ -74,7 +74,12 @@ revision. Press 1–7 for Board, Tasks, Dependencies, Schedule, Execution, Overv
 Overview shows counts from each workstream’s observed task page and flags
 pending confirmations. Press Enter on a workstream to open its board.
 The inspector follows task selection. Narrow terminals prioritize the active
-view. Use `--classic` for the original single-service presentation.
+view. An embedding host may bind one Chronos-owned product-alignment endpoint
+to an exact workstream; **8 Alignment** then presents its current proposal,
+stakeholder cohort, evidence/dissent/gate counts, and recommended next tasks.
+It is refreshable with **r** and has no apply, acceptance, claim,
+reprioritization, or sign-off authority. Use `--classic` for the original
+single-service presentation.
 
 Board lanes group observed phases. Left and Right move to the next populated
 lane. Dependencies shows observed prerequisite counts and readiness. Press

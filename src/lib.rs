@@ -2,6 +2,7 @@
 use chronos_model::{View, display_id};
 use chronos_protocol::{RetrySafety, TaskSpec};
 mod agenda;
+mod alignment;
 mod attempt;
 #[cfg(unix)]
 mod cancel_receipt;
@@ -41,8 +42,8 @@ pub struct CapabilityManifest {
 pub const CAPABILITIES: CapabilityManifest = CapabilityManifest {
     schema: 1,
     peer: "chronos",
-    interactive: &["tasks.observe.v1"],
-    headless: &["tasks.observe.v1"],
+    interactive: &["tasks.observe.v1", "product-alignment.observe.v1"],
+    headless: &["tasks.observe.v1", "product-alignment.observe.v1"],
 };
 
 fn task_badges(view: &View, row: &chronos_model::Row) -> String {

@@ -1,5 +1,6 @@
 //! Terminal host for independent Chronos service projections.
 use crate::agenda::{Agenda, Scope, WINDOW};
+use crate::alignment::Alignment;
 use crate::attempt::{Binding, Lookup};
 use crate::explain::{Detail, Selection};
 use crate::graph::Graph;
@@ -103,10 +104,11 @@ enum Surface {
     Execution,
     Overview,
     Plan,
+    Alignment,
 }
 
 impl Surface {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::Board,
         Self::Tasks,
         Self::Dependencies,
@@ -114,6 +116,7 @@ impl Surface {
         Self::Execution,
         Self::Overview,
         Self::Plan,
+        Self::Alignment,
     ];
 
     fn title(self) -> &'static str {
@@ -125,6 +128,7 @@ impl Surface {
             Self::Execution => "Execution",
             Self::Overview => "Overview",
             Self::Plan => "Plan",
+            Self::Alignment => "Alignment",
         }
     }
 }
@@ -135,6 +139,7 @@ struct Stream {
     component: Component,
     watch: Option<Watch>,
     moira: Option<Binding>,
+    alignment: Option<Alignment>,
     refreshing: bool,
     observation: u64,
 }
@@ -223,6 +228,7 @@ impl Hub {
                 component,
                 watch: observer,
                 moira: None,
+                alignment: None,
                 refreshing: false,
                 observation: 0,
             });
@@ -293,6 +299,31 @@ impl Hub {
             return Err("invalid or duplicate --daimon binding");
         }
         binding.daimon = Some(socket);
+        Ok(())
+    }
+
+    pub fn bind_alignment(
+        &mut self,
+        workstream: &str,
+        directory: PathBuf,
+        scope: String,
+    ) -> Result<(), &'static str> {
+        let stream = self
+            .streams
+            .iter_mut()
+            .find(|stream| stream.name == workstream)
+            .ok_or("unknown workstream for --chronos-alignment")?;
+        if stream.alignment.is_some()
+            || directory.as_os_str().is_empty()
+            || scope.is_empty()
+            || scope.len() > 256
+            || scope.chars().any(char::is_control)
+        {
+            return Err("invalid or duplicate --chronos-alignment binding");
+        }
+        let mut alignment = Alignment::new(directory, scope);
+        alignment.start();
+        stream.alignment = Some(alignment);
         Ok(())
     }
 
@@ -523,6 +554,7 @@ impl Hub {
             }
         }
         for stream in &mut self.streams {
+            changed |= stream.alignment.as_mut().is_some_and(Alignment::poll);
             let delivered = stream.component.poll();
             changed |= delivered;
             let mut invalidate_details = delivered;
@@ -751,11 +783,17 @@ impl Hub {
                     self.navigating = !self.navigating;
                     return Lifecycle::Continue;
                 }
-                KeyCode::Char('1'..='7') => {
+                KeyCode::Char('1'..='8') => {
                     let KeyCode::Char(digit) = key.code else {
                         unreachable!()
                     };
                     self.surface = Surface::ALL[digit as usize - '1' as usize];
+                    if self.surface == Surface::Alignment {
+                        self.streams[self.active]
+                            .alignment
+                            .as_mut()
+                            .map(Alignment::start);
+                    }
                     self.agenda_visible = false;
                     self.navigating = false;
                     return Lifecycle::Continue;
@@ -793,6 +831,19 @@ impl Hub {
                 Input::Up => self.active = self.active.saturating_sub(1),
                 Input::Down => self.active = (self.active + 1).min(self.streams.len() - 1),
                 Input::Enter => self.surface = Surface::Board,
+                Input::Text('q') => return Lifecycle::CloseRequested,
+                _ => {}
+            }
+            return Lifecycle::Continue;
+        }
+        if self.surface == Surface::Alignment {
+            match input {
+                Input::Text('r') => {
+                    self.streams[self.active]
+                        .alignment
+                        .as_mut()
+                        .map(Alignment::start);
+                }
                 Input::Text('q') => return Lifecycle::CloseRequested,
                 _ => {}
             }
@@ -1024,6 +1075,36 @@ impl Hub {
             frame.render_widget(Paragraph::new(search.notice).style(DIM), status);
             frame.render_widget(
                 Paragraph::new(" ↑/↓ select   Enter open   Esc return").style(DIM),
+                keys,
+            );
+            return;
+        }
+        if self.surface == Surface::Alignment && !self.navigating {
+            let text = stream.alignment.as_ref().map_or_else(
+                || {
+                    "No alignment endpoint is configured for this workstream.\n\nBind one exact owner directory and Chronos scope to observe PM alignment."
+                        .into()
+                },
+                Alignment::lines,
+            );
+            frame.render_widget(
+                Paragraph::new(text)
+                    .block(panel("Product alignment · read only", true))
+                    .wrap(Wrap { trim: true }),
+                body,
+            );
+            frame.render_widget(
+                Paragraph::new(
+                    stream
+                        .alignment
+                        .as_ref()
+                        .map_or("Alignment endpoint not configured.", Alignment::notice),
+                )
+                .block(panel("Activity", false)),
+                status,
+            );
+            frame.render_widget(
+                Paragraph::new(" w switch   r refresh alignment   q quit").style(DIM),
                 keys,
             );
             return;
@@ -1428,6 +1509,7 @@ impl Hub {
         let title = match self.surface {
             Surface::Overview => unreachable!("overview is rendered separately"),
             Surface::Plan => "Tasks",
+            Surface::Alignment => unreachable!("alignment is rendered separately"),
             Surface::Dependencies => "Dependency readiness",
             Surface::Schedule => "Scheduling",
             Surface::Execution => "Execution attempts",
@@ -1754,6 +1836,7 @@ mod workbench_tests {
                 component,
                 watch: None,
                 moira: None,
+                alignment: None,
                 refreshing: false,
                 observation: 0,
             }],
@@ -1878,5 +1961,38 @@ mod workbench_tests {
             hub.invoke_workbench(WorkbenchIntent::OpenSchedule),
             Err("Chronos scheduling was not selected for this session")
         );
+    }
+
+    #[test]
+    fn alignment_surface_is_bound_to_one_workstream_and_orients_attach_failure() {
+        let mut hub = hub(false, false);
+        hub.bind_alignment(
+            "Embedded",
+            "/definitely/not/an/alignment-owner".into(),
+            "product-delivery".into(),
+        )
+        .unwrap();
+        hub.update(KeyEvent::new(KeyCode::Char('8'), KeyModifiers::NONE));
+        assert_eq!(hub.surface, Surface::Alignment);
+        poll_until(&mut hub, |hub| {
+            hub.streams[0]
+                .alignment
+                .as_ref()
+                .is_some_and(|alignment| alignment.notice().contains("unavailable"))
+        });
+
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|frame| hub.draw(frame)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Product alignment"));
+        assert!(rendered.contains("no request was sent"));
+        assert!(rendered.contains("observation-only"));
     }
 }
