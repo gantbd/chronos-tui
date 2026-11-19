@@ -34,6 +34,7 @@ pub struct OperatorAgendaTask {
     pub incarnation: String,
     pub phase: &'static str,
     pub priority: i32,
+    pub dependency_count: usize,
 }
 
 /// One Chronos workstream contribution to a host-owned operator-agenda
@@ -355,9 +356,9 @@ impl Hub {
             .any(|stream| stream.component.mutation_recovery_required())
     }
 
-    /// Projects uncertain tasks from each bounded current owner page. A
-    /// composition host may route the operator back to Chronos, but must not
-    /// infer authority or mutate from this observation.
+    /// Projects blocked and uncertain tasks from each bounded current owner
+    /// page. A composition host may route the operator back to Chronos, but
+    /// must not infer authority or mutate from this observation.
     pub fn operator_agenda_observations(&self) -> Vec<OperatorAgendaObservation> {
         self.streams
             .iter()
@@ -373,12 +374,13 @@ impl Hub {
                     tasks: current
                         .into_iter()
                         .flat_map(|view| view.rows.iter())
-                        .filter(|row| row.phase == "uncertain")
+                        .filter(|row| row.phase == "blocked" || row.phase == "uncertain")
                         .map(|row| OperatorAgendaTask {
                             task: row.reference.task.clone(),
                             incarnation: row.reference.incarnation.clone(),
                             phase: row.phase,
                             priority: row.priority,
+                            dependency_count: row.dependency_count,
                         })
                         .collect(),
                 }
@@ -1698,7 +1700,7 @@ mod workbench_tests {
     use chronos_host::scheduling::{SchedulingRequestV1, SchedulingResponseV1};
     use chronos_sdk_embedded::service::scheduling::SchedulingAuthorizerV1;
     use chronos_sdk_embedded::{
-        engine::Engine,
+        engine::{Engine, StateRevision, TaskSpecV2},
         host::native::RequestV1,
         native_client::EmbeddedClient,
         service::{Authorizer, Limits, Service},
@@ -1727,8 +1729,12 @@ mod workbench_tests {
     }
 
     fn hub(writes: bool, scheduling: bool) -> Hub {
+        hub_with_engine(Engine::new(), writes, scheduling)
+    }
+
+    fn hub_with_engine(engine: Engine, writes: bool, scheduling: bool) -> Hub {
         let service = Service::new(
-            Engine::new(),
+            engine,
             SyntheticOwner,
             Limits {
                 max_graph_tasks: 8,
@@ -1769,6 +1775,28 @@ mod workbench_tests {
             plan: None,
             handoff: Handoff::default(),
         }
+    }
+
+    #[test]
+    fn operator_agenda_projects_blocked_work_without_ready_noise() {
+        let mut engine = Engine::new();
+        let root = TaskSpecV2::new("root");
+        let mut blocked = TaskSpecV2::new("blocked");
+        blocked.priority = 10;
+        blocked.dependencies.insert(root.id.clone());
+        engine
+            .submit_coordination_graph_at_revision(StateRevision::ZERO, vec![root, blocked])
+            .unwrap();
+        let mut hub = hub_with_engine(engine, true, true);
+        poll_until(&mut hub, |hub| hub.has_current_tasks());
+
+        let agenda = hub.operator_agenda_observations();
+        assert_eq!(agenda.len(), 1);
+        assert_eq!(agenda[0].tasks.len(), 1);
+        assert_eq!(agenda[0].tasks[0].task, "blocked");
+        assert_eq!(agenda[0].tasks[0].phase, "blocked");
+        assert_eq!(agenda[0].tasks[0].priority, 10);
+        assert_eq!(agenda[0].tasks[0].dependency_count, 1);
     }
 
     fn poll_until(hub: &mut Hub, condition: impl Fn(&Hub) -> bool) {
